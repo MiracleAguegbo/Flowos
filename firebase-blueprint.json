@@ -1,0 +1,223 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with business affiliation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["owner", "admin", "sales_agent"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "email", "displayName", "businessId", "role"]
+    },
+    "Business": {
+      "title": "Business",
+      "description": "Business organization workspace",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "ownerName": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 64 },
+        "location": { "type": "string", "maxLength": 256 },
+        "currency": { "type": "string", "maxLength": 16 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "ownerName", "currency"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "WhatsApp customer record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 64 },
+        "email": { "type": "string", "maxLength": 256 },
+        "location": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "enum": ["active", "prospect", "inactive", "vip"] },
+        "leadStage": { "type": "string" },
+        "tags": { "type": "array" },
+        "totalSpent": { "type": "number" },
+        "orderCount": { "type": "number" },
+        "averageOrderValue": { "type": "number" },
+        "customerSince": { "type": "string" }
+      },
+      "required": ["id", "businessId", "name", "phone"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "WhatsApp conversation thread",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "customerPhone": { "type": "string", "maxLength": 64 },
+        "lastMessage": { "type": "string", "maxLength": 2000 },
+        "lastMessageTime": { "type": "string" },
+        "unreadCount": { "type": "number" },
+        "leadStage": { "type": "string" },
+        "estimatedOrderValue": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "closed", "flagged"] }
+      },
+      "required": ["id", "businessId", "customerId"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Individual chat message",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "sender": { "type": "string", "enum": ["customer", "business", "system"] },
+        "content": { "type": "string", "maxLength": 4000 },
+        "timestamp": { "type": "string" },
+        "status": { "type": "string", "enum": ["sent", "delivered", "read"] }
+      },
+      "required": ["id", "conversationId", "businessId", "sender", "content"]
+    },
+    "Lead": {
+      "title": "Lead",
+      "description": "Sales pipeline opportunity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "productInterest": { "type": "string", "maxLength": 256 },
+        "potentialValue": { "type": "number" },
+        "stage": { "type": "string" },
+        "daysInStage": { "type": "number" },
+        "lastInteraction": { "type": "string" }
+      },
+      "required": ["id", "businessId", "customerId", "stage", "potentialValue"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "orderNumber": { "type": "string", "maxLength": 64 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "subtotal": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "orderStatus": { "type": "string" },
+        "createdDate": { "type": "string" }
+      },
+      "required": ["id", "orderNumber", "businessId", "customerId", "total"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Fashion catalog product item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 256 },
+        "sku": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 128 },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "description": { "type": "string", "maxLength": 2000 },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "businessId", "name", "price"]
+    },
+    "FollowUp": {
+      "title": "FollowUp",
+      "description": "Sales follow-up action",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "reason": { "type": "string", "maxLength": 512 },
+        "category": { "type": "string" },
+        "potentialValue": { "type": "number" },
+        "recommendedAction": { "type": "string", "maxLength": 512 },
+        "dueDate": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "businessId", "customerId", "potentialValue"]
+    },
+    "KnowledgeBase": {
+      "title": "KnowledgeBase",
+      "description": "Business knowledge base for AI assistant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "businessId": { "type": "string", "maxLength": 128 },
+        "businessDescription": { "type": "string", "maxLength": 4000 },
+        "openingHours": { "type": "string", "maxLength": 256 },
+        "location": { "type": "string", "maxLength": 256 },
+        "deliveryPolicy": { "type": "string", "maxLength": 2000 },
+        "paymentMethods": { "type": "string", "maxLength": 2000 },
+        "returnPolicy": { "type": "string", "maxLength": 2000 },
+        "discountRules": { "type": "string", "maxLength": 2000 },
+        "brandVoice": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "businessId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Application users and role definitions"
+    },
+    "/businesses/{businessId}": {
+      "schema": "Business",
+      "description": "Business workspace profile"
+    },
+    "/businesses/{businessId}/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Customer records for a business"
+    },
+    "/businesses/{businessId}/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "WhatsApp messaging conversations"
+    },
+    "/businesses/{businessId}/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages belonging to a conversation"
+    },
+    "/businesses/{businessId}/leads/{leadId}": {
+      "schema": "Lead",
+      "description": "Pipeline deals and leads"
+    },
+    "/businesses/{businessId}/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer purchase orders"
+    },
+    "/businesses/{businessId}/products/{productId}": {
+      "schema": "Product",
+      "description": "Products catalog"
+    },
+    "/businesses/{businessId}/followUps/{followUpId}": {
+      "schema": "FollowUp",
+      "description": "Sales follow-up tasks"
+    },
+    "/businesses/{businessId}/knowledgeBase/{kbId}": {
+      "schema": "KnowledgeBase",
+      "description": "Business knowledge base rules"
+    }
+  }
+}

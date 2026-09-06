@@ -1,0 +1,8 @@
+{
+  "name": "FlowOS",
+  "description": "WhatsApp-first sales and customer-management operating system for small and growing businesses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
