@@ -6,6 +6,7 @@ import {
   Order,
   Lead,
   FollowUp,
+  KnowledgeBase,
 } from '../../types';
 import {
   Bot,
@@ -26,6 +27,7 @@ interface AICopilotViewProps {
   orders: Order[];
   leads: Lead[];
   followUps: FollowUp[];
+  knowledgeBase?: KnowledgeBase;
 }
 
 interface ChatMessage {
@@ -42,16 +44,17 @@ export const AICopilotView: React.FC<AICopilotViewProps> = ({
   orders,
   leads,
   followUps,
+  knowledgeBase,
 }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [
     {
       id: 'welcome',
       sender: 'assistant',
-      text: `Hello Amaka! I'm your FlowOS AI Business Copilot for LUMA FASHION.
+      text: `Hello ${business.ownerName || 'there'}! I'm your FlowOS AI Business Copilot for ${business.name || 'your store'}.
 
 I have full real-time access to your WhatsApp sales pipeline, product catalog, customer orders, and pending follow-ups.
 
-Ask me anything about your revenue, unpaid orders, best-selling styles, or who to nudge on WhatsApp today!`,
+Ask me anything about your revenue, unpaid orders, best-selling products, or who to nudge on WhatsApp today!`,
       timestamp: 'Just now',
     },
   ]);
@@ -61,7 +64,7 @@ Ask me anything about your revenue, unpaid orders, best-selling styles, or who t
   const samplePrompts = [
     'How much revenue did we make this month?',
     'Which customers haven’t completed payment yet?',
-    'What are our best-selling ready-to-wear pieces?',
+    'What are our best-selling products?',
     'Who are the most urgent follow-ups due today?',
     'How can we reduce drop-offs between invoice and payment?',
   ];
@@ -89,6 +92,7 @@ Ask me anything about your revenue, unpaid orders, best-selling styles, or who t
           query: q,
           workspaceContext: {
             business,
+            knowledgeBase,
             metrics,
             products,
             orders,
@@ -108,10 +112,13 @@ Ask me anything about your revenue, unpaid orders, best-selling styles, or who t
       setMessages((prev) => [...prev, botMsg]);
     } catch (e) {
       console.error('Error sending query to AI Copilot:', e);
+      const isNewBiz = metrics.totalOrders === 0 && products.length === 0;
       const fallbackMsg: ChatMessage = {
         id: `bot_${Date.now()}`,
         sender: 'assistant',
-        text: `LUMA FASHION has generated ₦${metrics.revenueThisMonth.toLocaleString()} this month across ${metrics.totalOrders} orders. You currently have ₦${metrics.outstandingPayments.toLocaleString()} in pending payments and ${metrics.followUpsDue} follow-ups due.`,
+        text: isNewBiz
+          ? `Welcome! ${business.name || 'Your business'} is active and ready for its first orders. Add products to your catalog or connect WhatsApp to start receiving customer inquiries and tracking sales.`
+          : `${business.name || 'Your business'} has generated ${business.currency || '₦'}${metrics.revenueThisMonth.toLocaleString()} this month across ${metrics.totalOrders} orders. You currently have ${business.currency || '₦'}${metrics.outstandingPayments.toLocaleString()} in pending payments and ${metrics.followUpsDue} follow-ups due.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, fallbackMsg]);
@@ -205,7 +212,7 @@ Ask me anything about your revenue, unpaid orders, best-selling styles, or who t
           {isLoading && (
             <div className="flex items-center space-x-3 text-slate-400 text-xs italic p-2">
               <Bot className="w-4 h-4 text-emerald-600 animate-spin" />
-              <span>Analyzing LUMA FASHION workspace data with Gemini...</span>
+              <span>Analyzing {business.name || 'workspace'} data with Gemini...</span>
             </div>
           )}
         </div>

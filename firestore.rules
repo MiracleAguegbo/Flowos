@@ -1,11 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Global Safety Net: Default deny
+    // Global Safety Net: Default deny all unspecified collections
     match /{document=**} {
       allow read, write: if false;
     }
 
+    // Helper functions
     function isSignedIn() {
       return request.auth != null;
     }
@@ -14,34 +15,59 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isMemberOfBusiness(businessId) {
+    // Check if the requesting user is an explicitly listed member in the business document data
+    function isListedMemberOfDoc(businessData) {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/businesses/$(businessId)/members/$(request.auth.uid)) ||
-        get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == request.auth.uid
+        ('members' in businessData && businessData.members is list && request.auth.uid in businessData.members) ||
+        ('members' in businessData && businessData.members is map && request.auth.uid in businessData.members) ||
+        ('memberUids' in businessData && businessData.memberUids is list && request.auth.uid in businessData.memberUids) ||
+        ('ownerId' in businessData && businessData.ownerId is string && businessData.ownerId == request.auth.uid)
       );
     }
 
-    // Users Collection
+    // Fetch the parent business document and check if the requesting user is an explicitly listed member
+    function isMemberOfBusiness(businessId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/businesses/$(businessId)) &&
+        isListedMemberOfDoc(get(/databases/$(database)/documents/businesses/$(businessId)).data);
+    }
+
+    // Users Collection: users can only read/write their own document
     match /users/{userId} {
-      allow read: if isSignedIn() && request.auth.uid == userId;
-      allow create: if isSignedIn() && request.auth.uid == userId;
-      allow update: if isSignedIn() && request.auth.uid == userId;
+      allow read, create, update: if isSignedIn() && request.auth.uid == userId;
       allow delete: if false;
     }
 
-    // Businesses and Subcollections
+    // Businesses Collection: access strictly restricted to listed members of that specific business
     match /businesses/{businessId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() && (resource.data.ownerId == request.auth.uid || request.resource.data.ownerId == request.auth.uid);
-      allow delete: if false;
+      // Direct get: Only allowed if the requesting user's UID is a listed member in that specific business document
+      allow get: if isSignedIn() && isListedMemberOfDoc(resource.data);
 
+      // List query: Only allowed when query is scoped to businesses where the user is an owner or member
+      allow list: if isSignedIn() && (
+        ('ownerId' in resource.data && resource.data.ownerId is string && resource.data.ownerId == request.auth.uid) ||
+        ('members' in resource.data && resource.data.members is list && resource.data.members.hasAny([request.auth.uid])) ||
+        ('memberUids' in resource.data && resource.data.memberUids is list && resource.data.memberUids.hasAny([request.auth.uid]))
+      );
+
+      // Create: User can create a business document only if they list themselves as an owner or member
+      allow create: if isSignedIn() && isListedMemberOfDoc(request.resource.data);
+
+      // Update: Only an existing listed member of that specific business document can update it
+      allow update: if isSignedIn() && isListedMemberOfDoc(resource.data);
+
+      // Delete: Only the owner of the business can delete it
+      allow delete: if isSignedIn() && ('ownerId' in resource.data && resource.data.ownerId == request.auth.uid);
+
+      // Subcollections (customers, products, orders, leads, followUps, conversations, knowledgeBase, etc.)
+      // Master Gate: only allowed if user is a listed member in this specific business document
       match /{subcollection}/{docId} {
-        allow read, write: if isSignedIn();
-      }
+        allow read, write: if isMemberOfBusiness(businessId);
 
-      match /conversations/{conversationId}/messages/{messageId} {
-        allow read, write: if isSignedIn();
+        // Nested subcollections (e.g., /conversations/{conversationId}/messages/{messageId})
+        match /{nestedSubcollection}/{nestedDocId} {
+          allow read, write: if isMemberOfBusiness(businessId);
+        }
       }
     }
   }

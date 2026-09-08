@@ -5,6 +5,8 @@ import {
   Customer,
   PaymentStatus,
   OrderStatus,
+  Business,
+  KnowledgeBase,
 } from '../../types';
 import {
   Search,
@@ -27,6 +29,8 @@ interface OrdersViewProps {
   orders: Order[];
   products: Product[];
   customers: Customer[];
+  business?: Business;
+  knowledgeBase?: KnowledgeBase;
   onAddOrder: (order: Omit<Order, 'id' | 'orderNumber' | 'businessId' | 'createdDate'>) => void;
   onUpdateStatus: (orderId: string, paymentStatus?: PaymentStatus, orderStatus?: OrderStatus) => void;
   onOpenChat: (customerId: string) => void;
@@ -36,6 +40,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   orders,
   products,
   customers,
+  business,
+  knowledgeBase,
   onAddOrder,
   onUpdateStatus,
   onOpenChat,
@@ -116,7 +122,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   };
 
   const generateReceiptText = (order: Order) => {
-    return `🛍️ *LUMA FASHION • ORDER INVOICE*
+    const bizName = business?.name || 'ORDER INVOICE';
+    const currency = business?.currency || '₦';
+    return `🛍️ *${bizName.toUpperCase()} • ORDER INVOICE*
 ━━━━━━━━━━━━━━━━━━━━━━
 Order ID: #${order.orderNumber}
 Customer: ${order.customerName}
@@ -127,24 +135,22 @@ ITEMS:
 ${order.items
   .map(
     (item) =>
-      `• ${item.productName} (${item.size || 'Standard'}) x${item.quantity} — ₦${(
+      `• ${item.productName} (${item.size || 'Standard'}) x${item.quantity} — ${currency}${(
         item.price * item.quantity
       ).toLocaleString()}`
   )
   .join('\n')}
 
-Subtotal: ₦${order.subtotal.toLocaleString()}
-Delivery Fee: ₦${order.deliveryFee.toLocaleString()}
-${order.discount > 0 ? `Discount: -₦${order.discount.toLocaleString()}\n` : ''}
-*TOTAL PAYABLE: ₦${order.total.toLocaleString()}*
+Subtotal: ${currency}${order.subtotal.toLocaleString()}
+Delivery Fee: ${currency}${order.deliveryFee.toLocaleString()}
+${order.discount > 0 ? `Discount: -${currency}${order.discount.toLocaleString()}\n` : ''}
+*TOTAL PAYABLE: ${currency}${order.total.toLocaleString()}*
 Payment Status: ${order.paymentStatus === 'paid' ? '✅ PAID' : '⏳ AWAITING PAYMENT'}
 
 PAYMENT DETAILS:
-🏦 Bank: Zenith Bank
-💼 Name: LUMA FASHION APPAREL NIG LTD
-🔢 Acct: 1018945203
+${knowledgeBase?.paymentMethods || `Direct transfer to ${bizName}`}
 
-Thank you for choosing LUMA Fashion! ✨`;
+Thank you for choosing ${bizName}! ✨`;
   };
 
   const handleCopyReceipt = (order: Order) => {

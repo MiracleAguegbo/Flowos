@@ -48,6 +48,9 @@ export interface Business {
   currency: string;
   description: string;
   createdAt: string;
+  ownerId?: string;
+  members?: string[];
+  memberUids?: string[];
 }
 
 export interface Customer {

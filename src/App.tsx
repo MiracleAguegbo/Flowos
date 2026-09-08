@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { StorageService } from './services/storage';
+import { AuthService } from './services/authService';
 import {
   Customer,
   Product,
@@ -33,6 +34,8 @@ import { SettingsView } from './components/settings/SettingsView';
 import { SuperAdminView } from './components/admin/SuperAdminView';
 import { AuthPortal } from './components/auth/AuthPortal';
 import { AdminService } from './services/adminService';
+import { db } from './services/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -53,12 +56,56 @@ export default function App() {
   );
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  // Subscribe to reactive updates from storage service
+  // Subscribe to reactive updates from storage service and Firebase Auth
   useEffect(() => {
-    const unsubscribe = StorageService.subscribe((updatedData) => {
+    const unsubscribeStorage = StorageService.subscribe((updatedData) => {
       setData(updatedData);
     });
-    return unsubscribe;
+
+    const unsubscribeAuth = AuthService.onAuthChange(async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const profile = await AuthService.syncUserProfile(firebaseUser);
+          
+          // Check if this business document already exists in Firestore
+          const bizDocRef = doc(db, 'businesses', profile.businessId);
+          const bizSnap = await getDoc(bizDocRef);
+
+          if (bizSnap.exists()) {
+            // RETURNING USER / SESSION RESTORE:
+            // The business document already exists in Firestore.
+            // Safely attach to it without re-creating, guessing or overwriting.
+            const existingBizData = bizSnap.data();
+            await StorageService.setBusinessContext(
+              profile.businessId,
+              profile.id,
+              {
+                name: existingBizData?.name || 'My Store',
+                ownerName: existingBizData?.ownerName || profile.displayName || 'Merchant Owner',
+                category: existingBizData?.category || 'Retail',
+                phone: existingBizData?.phone || '',
+                location: existingBizData?.location || '',
+              },
+              false
+            );
+            setPortalMode('merchant');
+          } else {
+            // NEW SIGN-UP IN PROGRESS:
+            // The business document does NOT exist in Firestore yet!
+            // CRITICAL: DO NOT write or seed a dummy business document here.
+            // Leaving creation to onLoginAsMerchant ensures EXACTLY ONE authoritative code path
+            // writes the business document with the merchant's exact typed business name and owner name.
+          }
+        } catch (err) {
+          console.error('Error syncing auth profile:', err);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeStorage();
+      unsubscribeAuth();
+    };
   }, []);
 
   const addToast = (
@@ -80,8 +127,8 @@ export default function App() {
   };
 
   // Demo Simulation Actions
-  const handleSimulateIncomingMessage = () => {
-    const { customer, message } = StorageService.simulateIncomingMessage();
+  const handleSimulateIncomingMessage = async () => {
+    const { customer, message } = await StorageService.simulateIncomingMessage();
     addToast(
       'info',
       `💬 New WhatsApp: ${customer.name}`,
@@ -182,7 +229,7 @@ export default function App() {
 
   const handleUpdateBusiness = (updated: Partial<Business>) => {
     StorageService.updateBusiness(updated);
-    addToast('success', 'Business Updated', 'LUMA FASHION workspace saved.');
+    addToast('success', 'Business Updated', `${updated.name || data.business.name || 'Business'} workspace saved.`);
   };
 
   const handleUpdateKnowledgeBase = (updated: Partial<KnowledgeBase>) => {
@@ -197,7 +244,7 @@ export default function App() {
 
   const handleResetData = () => {
     StorageService.resetToSeed();
-    addToast('info', 'Data Reset', 'Restored initial LUMA FASHION demo workspace.');
+    addToast('info', 'Data Reset', 'Restored initial workspace data.');
   };
 
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -219,18 +266,50 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#0B0F19]">
         <AuthPortal
-          onLoginAsMerchant={(merchantId, email, displayName, businessName) => {
+          onLoginAsMerchant={async (merchantId, email, displayName, businessName) => {
             const tenant = AdminService.getTenantById(merchantId);
+            let finalBizName = tenant ? tenant.name : (businessName?.trim() || 'My WhatsApp Store');
+            let finalOwnerName = tenant ? tenant.ownerName : (displayName?.trim() || 'Merchant Owner');
+            let finalCategory = tenant ? tenant.category : data.business.category;
+            let finalPhone = tenant ? tenant.whatsappNumber : data.business.phone;
+            let finalLocation = tenant ? tenant.location : data.business.location;
+
+            try {
+              const bizDocRef = doc(db, 'businesses', merchantId);
+              const bizSnap = await getDoc(bizDocRef);
+              if (bizSnap.exists()) {
+                // RETURNING USER: Respect their true existing Firestore document! Never overwrite!
+                const existingBiz = bizSnap.data();
+                if (existingBiz?.name) finalBizName = existingBiz.name;
+                if (existingBiz?.ownerName) finalOwnerName = existingBiz.ownerName;
+                if (existingBiz?.category) finalCategory = existingBiz.category;
+                if (existingBiz?.phone) finalPhone = existingBiz.phone;
+                if (existingBiz?.location) finalLocation = existingBiz.location;
+              }
+            } catch (err) {
+              console.warn('Could not inspect existing business document, using input values', err);
+            }
+
             handleUpdateBusiness({
-              name: tenant ? tenant.name : businessName,
-              category: tenant ? tenant.category : data.business.category,
-              phone: tenant ? tenant.whatsappNumber : data.business.phone,
-              ownerName: tenant ? tenant.ownerName : displayName,
-              location: tenant ? tenant.location : data.business.location,
+              name: finalBizName,
+              category: finalCategory,
+              phone: finalPhone,
+              ownerName: finalOwnerName,
+              location: finalLocation,
             });
+            const isDemo = merchantId === 'biz_luma_main';
+            await StorageService.setBusinessContext(
+              merchantId,
+              AuthService.getCurrentUser()?.uid || 'merchant_user',
+              {
+                name: finalBizName,
+                ownerName: finalOwnerName,
+              },
+              isDemo
+            );
             setPortalMode('merchant');
             setActiveView('dashboard');
-            addToast('success', 'Signed In', `Welcome to ${businessName}, ${displayName}!`);
+            addToast('success', 'Signed In', `Welcome to ${finalBizName}, ${finalOwnerName}!`);
           }}
           onLoginAsSuperAdmin={() => {
             setPortalMode('superadmin');
@@ -265,6 +344,21 @@ export default function App() {
               ownerName: onboardingData.ownerName,
               location: onboardingData.location,
             });
+
+            const newBizId = `biz_${Date.now().toString(36)}`;
+            const currentUserId = AuthService.getCurrentUser()?.uid || `user_${Date.now().toString(36)}`;
+            StorageService.setBusinessContext(
+              newBizId,
+              currentUserId,
+              {
+                name: onboardingData.businessName,
+                ownerName: onboardingData.ownerName,
+                category: onboardingData.category,
+                phone: onboardingData.phone,
+                location: onboardingData.location,
+              },
+              false // Real merchant onboarding starts with an empty business
+            );
 
             if (onboardingData.initialProduct) {
               StorageService.addProduct({
@@ -377,7 +471,12 @@ export default function App() {
           setIsMobileOpen={setIsMobileOpen}
           business={data.business}
           user={data.user}
-          onLogout={() => {
+          onLogout={async () => {
+            try {
+              await AuthService.signOut();
+            } catch (err) {
+              console.error('Sign out error:', err);
+            }
             setPortalMode('auth');
             addToast('info', 'Logged Out', 'Returned to FlowOS Sign In Portal.');
           }}
@@ -413,6 +512,8 @@ export default function App() {
                 followUps={data.followUps}
                 recentOrders={data.orders.slice(0, 5)}
                 conversations={data.conversations}
+                business={data.business}
+                userDisplayName={data.user?.displayName}
                 onNavigate={setActiveView}
                 onOpenChat={handleOpenChat}
                 onUpdateLeadStage={handleUpdateLeadStage}
@@ -432,6 +533,7 @@ export default function App() {
               products={data.products}
               knowledgeBase={data.knowledgeBase}
               whatsAppConfig={data.whatsAppConfig}
+              business={data.business}
               onSendMessage={handleSendMessage}
               onUpdateLeadStage={handleUpdateLeadStage}
               onCreateOrderForCustomer={(cust) => {
@@ -472,6 +574,8 @@ export default function App() {
               orders={data.orders}
               products={data.products}
               customers={data.customers}
+              business={data.business}
+              knowledgeBase={data.knowledgeBase}
               onAddOrder={handleAddOrder}
               onUpdateStatus={handleUpdateOrderStatus}
               onOpenChat={handleOpenChat}
@@ -500,6 +604,7 @@ export default function App() {
               products={data.products}
               orders={data.orders}
               leads={data.leads}
+              business={data.business}
             />
           )}
 
@@ -511,6 +616,7 @@ export default function App() {
               orders={data.orders}
               leads={data.leads}
               followUps={data.followUps}
+              knowledgeBase={data.knowledgeBase}
             />
           )}
 

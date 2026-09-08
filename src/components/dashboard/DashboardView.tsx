@@ -6,6 +6,7 @@ import {
   Order,
   Conversation,
   LeadStage,
+  Business,
 } from '../../types';
 import {
   ArrowRight,
@@ -21,6 +22,8 @@ interface DashboardViewProps {
   followUps: FollowUp[];
   recentOrders: Order[];
   conversations: Conversation[];
+  business?: Business;
+  userDisplayName?: string;
   onNavigate: (view: string) => void;
   onOpenChat: (customerId: string, draftMessage?: string) => void;
   onUpdateLeadStage: (customerId: string, stage: LeadStage) => void;
@@ -32,27 +35,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   followUps,
   recentOrders,
   conversations,
+  business,
+  userDisplayName,
   onNavigate,
   onOpenChat,
 }) => {
   const urgentFollowUps = followUps.filter((f) => f.status === 'pending').slice(0, 4);
+  const currency = business?.currency || '₦';
+  const isDemo = business?.id === 'biz_luma_main' || business?.id === 'biz_luma_01';
 
   // Sales funnel counts
-  const newLeadsCount = leads.filter((l) => l.stage === 'NEW_LEAD').length || 87;
-  const interestedCount = leads.filter((l) => l.stage === 'INTERESTED').length || 52;
-  const productSelectedCount = leads.filter((l) => l.stage === 'PRODUCT_SELECTED').length || 31;
-  const awaitingPaymentCount = leads.filter((l) => l.stage === 'AWAITING_PAYMENT').length || 12;
-  const paidCount = leads.filter((l) => l.stage === 'PAID' || l.stage === 'COMPLETED').length || 25;
+  const newLeadsCount = leads.filter((l) => l.stage === 'NEW_LEAD').length || (isDemo ? 87 : 0);
+  const interestedCount = leads.filter((l) => l.stage === 'INTERESTED').length || (isDemo ? 52 : 0);
+  const productSelectedCount = leads.filter((l) => l.stage === 'PRODUCT_SELECTED').length || (isDemo ? 31 : 0);
+  const awaitingPaymentCount = leads.filter((l) => l.stage === 'AWAITING_PAYMENT').length || (isDemo ? 12 : 0);
+  const paidCount = leads.filter((l) => l.stage === 'PAID' || l.stage === 'COMPLETED').length || (isDemo ? 25 : 0);
+  const maxFunnelCount = Math.max(newLeadsCount, interestedCount, productSelectedCount, awaitingPaymentCount, paidCount, 1);
+
+  const greetingName = userDisplayName || business?.ownerName || 'there';
+  const bizName = business?.name || 'your store';
 
   return (
     <div className="p-6 sm:p-8 space-y-8 max-w-7xl mx-auto">
       {/* Greeting Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-[#111827]">Good morning, Amaka</h1>
+          <h1 className="text-2xl font-bold text-[#111827]">Good morning, {greetingName}</h1>
           <p className="text-[#6B7280] text-sm mt-0.5">
             Here is what is happening at{' '}
-            <span className="text-[#2563EB] font-medium">Luma Fashion</span> today.
+            <span className="text-[#2563EB] font-medium">{bizName}</span> today.
           </p>
         </div>
 
@@ -80,7 +91,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Revenue Today
           </p>
           <p className="text-xl font-bold text-[#111827]">
-            ₦{metrics.revenueToday.toLocaleString()}
+            {currency}{metrics.revenueToday.toLocaleString()}
           </p>
           <p className="text-xs text-green-600 font-medium mt-2 flex items-center gap-1">
             <span>↑ 12% from yesterday</span>
@@ -100,7 +111,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Outstanding
           </p>
           <p className="text-xl font-bold text-red-500">
-            ₦{metrics.outstandingPayments.toLocaleString()}
+            {currency}{metrics.outstandingPayments.toLocaleString()}
           </p>
           <p className="text-xs text-[#9CA3AF] mt-2">
             {leads.filter((l) => l.stage === 'AWAITING_PAYMENT').length} pending payments
@@ -113,7 +124,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
           <p className="text-xl font-bold text-[#111827]">{metrics.followUpsDue}</p>
           <p className="text-xs text-[#2563EB] font-medium mt-2">
-            ₦{(metrics.recoverableRevenue / 1000000).toFixed(1)}M potential revenue
+            {metrics.recoverableRevenue >= 1000000
+              ? `${currency}${(metrics.recoverableRevenue / 1000000).toFixed(1)}M potential revenue`
+              : `${currency}${metrics.recoverableRevenue.toLocaleString()} potential revenue`}
           </p>
         </div>
       </div>
@@ -134,7 +147,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="font-bold text-[#111827]">{newLeadsCount}</span>
               </div>
               <div className="h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 w-full" />
+                <div
+                  className="h-full bg-blue-500 transition-all duration-300"
+                  style={{ width: `${newLeadsCount > 0 && maxFunnelCount > 0 ? Math.round((newLeadsCount / maxFunnelCount) * 100) : 0}%` }}
+                />
               </div>
             </div>
 
@@ -144,7 +160,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="font-bold text-[#111827]">{interestedCount}</span>
               </div>
               <div className="h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                <div className="h-full bg-blue-400 w-[60%]" />
+                <div
+                  className="h-full bg-blue-400 transition-all duration-300"
+                  style={{ width: `${interestedCount > 0 && maxFunnelCount > 0 ? Math.round((interestedCount / maxFunnelCount) * 100) : 0}%` }}
+                />
               </div>
             </div>
 
@@ -154,7 +173,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="font-bold text-[#111827]">{productSelectedCount}</span>
               </div>
               <div className="h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                <div className="h-full bg-blue-300 w-[35%]" />
+                <div
+                  className="h-full bg-blue-300 transition-all duration-300"
+                  style={{ width: `${productSelectedCount > 0 && maxFunnelCount > 0 ? Math.round((productSelectedCount / maxFunnelCount) * 100) : 0}%` }}
+                />
               </div>
             </div>
 
@@ -164,7 +186,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="font-bold text-amber-600">{awaitingPaymentCount}</span>
               </div>
               <div className="h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                <div className="h-full bg-yellow-400 w-[20%]" />
+                <div
+                  className="h-full bg-yellow-400 transition-all duration-300"
+                  style={{ width: `${awaitingPaymentCount > 0 && maxFunnelCount > 0 ? Math.round((awaitingPaymentCount / maxFunnelCount) * 100) : 0}%` }}
+                />
               </div>
             </div>
 
@@ -174,7 +199,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="font-bold text-green-600">{paidCount}</span>
               </div>
               <div className="h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                <div className="h-full bg-green-500 w-[30%]" />
+                <div
+                  className="h-full bg-green-500 transition-all duration-300"
+                  style={{ width: `${paidCount > 0 && maxFunnelCount > 0 ? Math.round((paidCount / maxFunnelCount) * 100) : 0}%` }}
+                />
               </div>
             </div>
           </div>

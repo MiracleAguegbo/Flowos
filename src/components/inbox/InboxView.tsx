@@ -38,6 +38,7 @@ import {
   LeadStage,
   Order,
   WhatsAppIntegrationConfig,
+  Business,
 } from '../../types';
 import { StageBadge } from '../common/Badge';
 
@@ -50,6 +51,7 @@ interface InboxViewProps {
   products: Product[];
   knowledgeBase: KnowledgeBase;
   whatsAppConfig?: WhatsAppIntegrationConfig;
+  business?: Business;
   onSendMessage: (conversationId: string, content: string) => void;
   onUpdateLeadStage: (customerId: string, stage: LeadStage) => void;
   onCreateOrderForCustomer: (customer: Customer) => void;
@@ -68,6 +70,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   products,
   knowledgeBase,
   whatsAppConfig,
+  business,
   onSendMessage,
   onUpdateLeadStage,
   onCreateOrderForCustomer,
@@ -129,6 +132,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          business,
           message: activeConv.lastMessage,
           history: messages.slice(-5),
           customer,
@@ -155,26 +159,24 @@ export const InboxView: React.FC<InboxViewProps> = ({
   };
 
   const handleSendQuickBankDetails = () => {
-    const bankMsg = `Here are our official LUMA Fashion payment details:
-🏦 Bank: Zenith Bank
-💼 Account Name: LUMA FASHION APPAREL NIG LTD
-🔢 Account Number: 1018945203
-💳 Branch: Lekki Phase 1, Lagos
+    const bankMsg = `Here are our official ${business?.name || 'store'} payment details:
+💳 Payment Methods: ${knowledgeBase?.paymentMethods || 'Direct bank transfer or online checkout link'}
+🏢 Business: ${business?.name || 'Our Store'}
+📍 Location: ${business?.location || knowledgeBase?.location || 'Nigeria'}
 
 Please send your transfer receipt here once completed for instant dispatch confirmation! ✨`;
     setMessageInput(bankMsg);
   };
 
   const handleSendProductCard = (p: Product) => {
+    const currency = business?.currency || '₦';
     const productMsg = `✨ *${p.name}*
-💰 Price: ₦${p.price.toLocaleString()}
-👗 Available Sizes: ${p.sizes.join(', ')}
-🎨 Colours: ${p.colours.join(', ')}
-📍 Showroom: Lekki Phase 1, Lagos
+💰 Price: ${currency}${p.price.toLocaleString()}${p.sizes?.length ? `\n👗 Available Sizes: ${p.sizes.join(', ')}` : ''}${p.colours?.length ? `\n🎨 Colours: ${p.colours.join(', ')}` : ''}
+📍 Location: ${business?.location || knowledgeBase?.location || 'Available for delivery'}
 
 ${p.description}
 
-Would you like me to reserve your size today?`;
+Would you like me to reserve this for you today?`;
     setMessageInput(productMsg);
     setShowCatalogModal(false);
   };
