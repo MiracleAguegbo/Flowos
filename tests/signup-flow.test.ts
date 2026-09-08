@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { handleAuthStateChange, handleMerchantLogin } from '../src/services/appAuthFlow';
 
 describe('Sign-Up Business Creation & Field Disentanglement', () => {
   it('correctly separates personal displayName and business name when personal name is left blank', () => {
@@ -81,23 +82,206 @@ describe('Sign-Up Business Creation & Field Disentanglement', () => {
     expect(createdBusinessDoc.ownerName).toBe('Merchant Owner');
   });
 
-  it('ensures onAuthChange does not race or write dummy business document on first sign-up', () => {
-    // Simulated onAuthChange execution when bizSnap does NOT exist yet
-    const bizSnapExists = false;
-    let writeCount = 0;
+  it('ensures real exported handleAuthStateChange does not race, create, or call setBusinessContext on first sign-up', async () => {
+    let setBusinessContextCalls = 0;
+    let onRestoredCalls = 0;
+    let onPendingOnboardingCalls = 0;
 
-    if (bizSnapExists) {
-      // Returning user - would attach context
-      writeCount++;
-    } else {
-      // New sign-up - explicitly no-op to allow onLoginAsMerchant to be sole authority
+    const mockUser: any = {
+      uid: 'user_first_signup_123',
+      email: 'newuser@store.ng',
+      displayName: 'New Merchant',
+    };
+
+    const result = await handleAuthStateChange(mockUser, {
+      syncUserProfile: async (u) => ({
+        id: u.uid,
+        businessId: 'biz_new_123',
+        displayName: u.displayName,
+        email: u.email,
+      }),
+      getDoc: async () => ({
+        exists: () => false,
+        data: () => null,
+      }),
+      setBusinessContext: async () => {
+        setBusinessContextCalls++;
+      },
+      onRestored: () => {
+        onRestoredCalls++;
+      },
+      onPendingOnboarding: () => {
+        onPendingOnboardingCalls++;
+      },
+    });
+
+    // Must detect pending onboarding, NOT restore
+    expect(result.action).toBe('pending_onboarding');
+    expect(onPendingOnboardingCalls).toBe(1);
+    expect(onRestoredCalls).toBe(0);
+    // ABSOLUTELY ZERO calls to setBusinessContext or business writes from auth state change!
+    expect(setBusinessContextCalls).toBe(0);
+  });
+
+  it('signs up a new user, and asserts that exactly one setDoc call is made to /businesses/..., and that it happens from handleMerchantLogin, not handleAuthStateChange', async () => {
+    // Track all setDoc writes across the entire lifecycle, tagging the originating caller
+    interface SetDocRecord {
+      path: string;
+      data: any;
+      caller: 'handleAuthStateChange' | 'handleMerchantLogin';
     }
+    const recordedSetDocCalls: SetDocRecord[] = [];
+    const simulatedFirestoreDocs: Record<string, any> = {};
 
-    expect(writeCount).toBe(0); // Zero writes from onAuthChange!
+    let currentCaller: 'handleAuthStateChange' | 'handleMerchantLogin' = 'handleAuthStateChange';
 
-    // Only onLoginAsMerchant performs the single authoritative write
-    const onLoginAsMerchantWrites = 1;
-    expect(onLoginAsMerchantWrites).toBe(1);
+    const mockGetDoc = async (docRefOrPath: any) => {
+      const path = typeof docRefOrPath === 'string' ? docRefOrPath : (docRefOrPath?.path || docRefOrPath?._key?.path?.toString() || '');
+      const data = simulatedFirestoreDocs[path];
+      return {
+        exists: () => Boolean(data),
+        data: () => data,
+      };
+    };
+
+    const mockSetDoc = async (path: string, data: any) => {
+      recordedSetDocCalls.push({
+        path,
+        data,
+        caller: currentCaller,
+      });
+      simulatedFirestoreDocs[path] = data;
+    };
+
+    // 1. A new user signs up in AuthPortal
+    const newAuthUser: any = {
+      uid: 'user_chinelo_456',
+      email: 'chinelo@stores.ng',
+      displayName: 'Chinelo Eze',
+    };
+    const typedBusinessName = 'Chinelo Fabrics';
+    const computedBusinessId = `biz_${newAuthUser.uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`;
+
+    // =========================================================================
+    // STEP 1: Execute REAL handleAuthStateChange
+    // =========================================================================
+    currentCaller = 'handleAuthStateChange';
+    const authChangeResult = await handleAuthStateChange(newAuthUser, {
+      syncUserProfile: async (u) => {
+        // User profile doc write in users/{uid}
+        await mockSetDoc(`users/${u.uid}`, {
+          id: u.uid,
+          email: u.email,
+          displayName: u.displayName,
+          businessId: computedBusinessId,
+          role: 'owner',
+        });
+        return {
+          id: u.uid,
+          businessId: computedBusinessId,
+          displayName: u.displayName,
+          email: u.email,
+        };
+      },
+      getDoc: mockGetDoc,
+      setBusinessContext: async (bizId, userId, meta) => {
+        // If handleAuthStateChange ever writes to business doc, record it
+        await mockSetDoc(`businesses/${bizId}`, meta);
+      },
+    });
+
+    // Assert: User doc was written, but ZERO writes to businesses/... occurred in handleAuthStateChange
+    expect(authChangeResult.action).toBe('pending_onboarding');
+    const onAuthChangeBusinessWrites = recordedSetDocCalls.filter(
+      (c) => c.caller === 'handleAuthStateChange' && c.path.startsWith('businesses/')
+    );
+    expect(onAuthChangeBusinessWrites).toHaveLength(0);
+
+    // =========================================================================
+    // STEP 2: Execute REAL handleMerchantLogin
+    // =========================================================================
+    currentCaller = 'handleMerchantLogin';
+    const loginResult = await handleMerchantLogin(
+      {
+        merchantId: computedBusinessId,
+        email: newAuthUser.email,
+        displayName: newAuthUser.displayName,
+        businessName: typedBusinessName,
+      },
+      {
+        getDoc: mockGetDoc,
+        getCurrentUserId: () => newAuthUser.uid,
+        setBusinessContext: async (bizId, userId, meta) => {
+          // Authoritative business write simulated exactly as StorageService does
+          await mockSetDoc(`businesses/${bizId}`, {
+            id: bizId,
+            name: meta?.name || 'My Store',
+            ownerName: meta?.ownerName || 'Merchant Owner',
+            ownerId: userId,
+            members: [userId],
+            memberUids: [userId],
+            category: 'Retail',
+            currency: 'NGN',
+            createdAt: new Date().toISOString(),
+          });
+        },
+      }
+    );
+
+    expect(loginResult.success).toBe(true);
+    expect(loginResult.business.name).toBe('Chinelo Fabrics');
+    expect(loginResult.business.ownerName).toBe('Chinelo Eze');
+
+    // =========================================================================
+    // ASSERTIONS: Directly proves single-path creation using REAL exported code
+    // =========================================================================
+    const allBusinessSetDocCalls = recordedSetDocCalls.filter((c) =>
+      c.path.startsWith('businesses/')
+    );
+
+    // 1. Exactly ONE setDoc call is made to /businesses/... in total across the entire signup lifecycle
+    expect(allBusinessSetDocCalls).toHaveLength(1);
+
+    // 2. That single setDoc call happened from handleMerchantLogin, NOT handleAuthStateChange
+    expect(allBusinessSetDocCalls[0].caller).toBe('handleMerchantLogin');
+    expect(allBusinessSetDocCalls[0].caller).not.toBe('handleAuthStateChange');
+
+    // 3. The target path is exactly the user's business document
+    expect(allBusinessSetDocCalls[0].path).toBe(`businesses/${computedBusinessId}`);
+
+    // 4. Document data holds the merchant's exact chosen name and owner
+    expect(allBusinessSetDocCalls[0].data.name).toBe('Chinelo Fabrics');
+    expect(allBusinessSetDocCalls[0].data.ownerName).toBe('Chinelo Eze');
+    expect(allBusinessSetDocCalls[0].data.ownerId).toBe('user_chinelo_456');
+  });
+
+  it('aborts handleMerchantLogin without calling onSuccess when isCancelled flag is set', async () => {
+    let onSuccessCalled = false;
+    let setBusinessContextCalled = false;
+
+    const result = await handleMerchantLogin(
+      {
+        merchantId: 'biz_cancelled_1',
+        email: 'test@cancel.com',
+        displayName: 'Cancelled User',
+        businessName: 'Cancelled Store',
+      },
+      {
+        getDoc: async () => ({ exists: () => false, data: () => null }),
+        isCancelled: () => true, // User clicked "Return to Sign In"
+        setBusinessContext: async () => {
+          setBusinessContextCalled = true;
+        },
+        onSuccess: () => {
+          onSuccessCalled = true;
+        },
+      }
+    );
+
+    expect(result.cancelled).toBe(true);
+    expect(result.success).toBe(false);
+    expect(setBusinessContextCalled).toBe(false);
+    expect(onSuccessCalled).toBe(false);
   });
 
   it('CONFIRMS new Google sign-up creates a business document in Firestore', () => {

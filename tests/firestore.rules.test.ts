@@ -583,4 +583,67 @@ describe.skipIf(!hasEmulator)('Firestore Security Rules - Business Multi-Tenant 
       expect(existingSnap.data()?.name).toBe("Kemi's Store");
     });
   });
+
+  describe('Non-Existent Business Document getDoc Check (Null Resource Evaluation)', () => {
+    it('confirms plain getDoc() on non-existent business fails with old rule text and passes cleanly with resource == null fix', async () => {
+      const authenticatedUserDb = testEnv.authenticatedContext('user_new_merchant').firestore();
+      const nonExistentDocRef = doc(authenticatedUserDb, 'businesses', 'biz_does_not_exist_yet');
+
+      const loadRulesToEmulator = async (rulesContent: string) => {
+        const host = testEnv.emulators.firestore?.host || '127.0.0.1';
+        const port = testEnv.emulators.firestore?.port || 8088;
+        const res = await fetch(
+          `http://${host}:${port}/emulator/v1/projects/${testEnv.projectId}:securityRules`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              rules: {
+                files: [{ content: rulesContent }],
+              },
+            }),
+          }
+        );
+        if (!res.ok) {
+          throw new Error(`Failed to load rules into emulator: ${await res.text()}`);
+        }
+      };
+
+      const currentRules = readFileSync(resolve(__dirname, '../firestore.rules'), 'utf8');
+
+      try {
+        // 1. OLD RULE TEXT (without resource == null check):
+        // allow get: if isSignedIn() && isListedMemberOfDoc(resource.data);
+        const oldRules = currentRules.replace(
+          'allow get: if isSignedIn() && (resource == null || isListedMemberOfDoc(resource.data));',
+          'allow get: if isSignedIn() && isListedMemberOfDoc(resource.data);'
+        );
+
+        // Load old rules into emulator to prove the failure
+        await loadRulesToEmulator(oldRules);
+
+        // Calling plain getDoc() with old rules throws permission-denied (Null value error evaluating resource.data)
+        let oldRuleError: any = null;
+        try {
+          await getDoc(nonExistentDocRef);
+        } catch (err) {
+          oldRuleError = err;
+        }
+        expect(oldRuleError).not.toBeNull();
+        expect(oldRuleError.code).toBe('permission-denied');
+
+        // 2. NEW RULE TEXT (with resource == null fix):
+        // allow get: if isSignedIn() && (resource == null || isListedMemberOfDoc(resource.data));
+        await loadRulesToEmulator(currentRules);
+
+        // Calling plain getDoc() with fixed rules succeeds cleanly and returns exists: false
+        const snap = await getDoc(nonExistentDocRef);
+        expect(snap.exists()).toBe(false);
+        expect(snap.data()).toBeUndefined();
+      } finally {
+        // Always ensure current rules remain active for any subsequent tests
+        await loadRulesToEmulator(currentRules);
+      }
+    });
+  });
 });

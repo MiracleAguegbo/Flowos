@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StorageService } from './services/storage';
 import { AuthService } from './services/authService';
+import { handleAuthStateChange, handleMerchantLogin } from './services/appAuthFlow';
 import {
   Customer,
   Product,
@@ -56,6 +57,9 @@ export default function App() {
   );
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  const [isSettingUp, setIsSettingUp] = useState(false);
+  const setupCancelledRef = useRef(false);
+
   // Subscribe to reactive updates from storage service and Firebase Auth
   useEffect(() => {
     const unsubscribeStorage = StorageService.subscribe((updatedData) => {
@@ -63,7 +67,6 @@ export default function App() {
     });
 
     const unsubscribeAuth = AuthService.onAuthChange(async (firebaseUser) => {
-      // (1) inside onAuthChange, log the exact firebaseUser object it receives (or confirm it's null)
       console.log('(1) [onAuthChange] firebaseUser received:', firebaseUser ? {
         uid: firebaseUser.uid,
         email: firebaseUser.email,
@@ -72,68 +75,11 @@ export default function App() {
         emailVerified: firebaseUser.emailVerified,
       } : null);
 
-      if (firebaseUser) {
-        try {
-          const profile = await AuthService.syncUserProfile(firebaseUser);
-          
-          // Check if this business document already exists in Firestore
-          const bizDocRef = doc(db, 'businesses', profile.businessId);
-          console.log('(3) [getDoc check] Initiating getDoc check for business document path:', `businesses/${profile.businessId}`);
-          try {
-            const bizSnap = await getDoc(bizDocRef);
-            console.log('(3) [getDoc check] getDoc check SUCCEEDED. Exists:', bizSnap.exists(), 'Data:', bizSnap.exists() ? bizSnap.data() : null);
-
-            if (bizSnap.exists()) {
-              // RETURNING USER / SESSION RESTORE:
-              // The business document already exists in Firestore.
-              // Safely attach to it without re-creating, guessing or overwriting.
-              const existingBizData = bizSnap.data();
-              console.log('(2) [setBusinessContext] Passing businessId into setBusinessContext from session restore:', profile.businessId);
-              await StorageService.setBusinessContext(
-                profile.businessId,
-                profile.id,
-                {
-                  name: existingBizData?.name || 'My Store',
-                  ownerName: existingBizData?.ownerName || profile.displayName || 'Merchant Owner',
-                  category: existingBizData?.category || 'Retail',
-                  phone: existingBizData?.phone || '',
-                  location: existingBizData?.location || '',
-                },
-                false
-              );
-              setPortalMode('merchant');
-            } else {
-              // AUTHENTICATED USER WITH NO FIRESTORE BUSINESS DOC YET:
-              // Provision their business immediately so they never remain stuck on the demo store!
-              const defaultBizName = profile.displayName ? `${profile.displayName}'s Store` : 'My WhatsApp Store';
-              const defaultOwnerName = profile.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'Merchant Owner');
-              console.log('(2) [setBusinessContext] Auto-provisioning business for newly authenticated user:', profile.businessId);
-              await StorageService.setBusinessContext(
-                profile.businessId,
-                profile.id,
-                {
-                  name: defaultBizName,
-                  ownerName: defaultOwnerName,
-                  category: 'Retail',
-                  phone: '',
-                  location: '',
-                },
-                false
-              );
-              setPortalMode('merchant');
-            }
-          } catch (getDocError: any) {
-            console.error('(3) [getDoc check] getDoc check FAILED for business document:', profile.businessId, {
-              message: getDocError?.message,
-              code: getDocError?.code,
-            });
-          }
-        } catch (err) {
-          console.error('Error syncing auth profile:', err);
-        }
-      } else {
-        console.log('(1) [onAuthChange] User is null. Showing unauthenticated or default state.');
-      }
+      await handleAuthStateChange(firebaseUser, {
+        onRestored: () => {
+          setPortalMode('merchant');
+        },
+      });
     });
 
     return () => {
@@ -294,6 +240,33 @@ export default function App() {
     : [];
 
   // ==========================================
+  // LOADING / WORKSPACE SETUP STATE
+  // ==========================================
+  if (isSettingUp) {
+    return (
+      <div className="min-h-screen bg-[#0B0F19] flex flex-col items-center justify-center p-4 text-white">
+        <div className="flex flex-col items-center gap-4 text-center max-w-md bg-slate-900/60 p-8 rounded-2xl border border-slate-800/80 shadow-2xl backdrop-blur-sm">
+          <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+          <h2 className="text-xl font-bold tracking-tight text-slate-100">Preparing Your Store Workspace</h2>
+          <p className="text-sm text-slate-400">Configuring WhatsApp automation, inventory records, and AI knowledge base...</p>
+          <div className="pt-2">
+            <button
+              onClick={() => {
+                setupCancelledRef.current = true;
+                setIsSettingUp(false);
+                addToast('info', 'Setup Cancelled', 'Returned to sign-in portal.');
+              }}
+              className="text-xs text-slate-400 hover:text-slate-200 underline underline-offset-4 transition-colors"
+            >
+              Taking longer than expected? Return to Sign In
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
   // 1. SEPARATE AUTHENTICATION & ONBOARDING PORTAL
   // ==========================================
   if (portalMode === 'auth') {
@@ -301,49 +274,41 @@ export default function App() {
       <div className="min-h-screen bg-[#0B0F19]">
         <AuthPortal
           onLoginAsMerchant={async (merchantId, email, displayName, businessName) => {
-            const tenant = AdminService.getTenantById(merchantId);
-            let finalBizName = tenant ? tenant.name : (businessName?.trim() || 'My WhatsApp Store');
-            let finalOwnerName = tenant ? tenant.ownerName : (displayName?.trim() || 'Merchant Owner');
-            let finalCategory = tenant ? tenant.category : data.business.category;
-            let finalPhone = tenant ? tenant.whatsappNumber : data.business.phone;
-            let finalLocation = tenant ? tenant.location : data.business.location;
-
+            setupCancelledRef.current = false;
+            setIsSettingUp(true);
             try {
-              const bizDocRef = doc(db, 'businesses', merchantId);
-              const bizSnap = await getDoc(bizDocRef);
-              if (bizSnap.exists()) {
-                // RETURNING USER: Respect their true existing Firestore document! Never overwrite!
-                const existingBiz = bizSnap.data();
-                if (existingBiz?.name) finalBizName = existingBiz.name;
-                if (existingBiz?.ownerName) finalOwnerName = existingBiz.ownerName;
-                if (existingBiz?.category) finalCategory = existingBiz.category;
-                if (existingBiz?.phone) finalPhone = existingBiz.phone;
-                if (existingBiz?.location) finalLocation = existingBiz.location;
-              }
-            } catch (err) {
-              console.warn('Could not inspect existing business document, using input values', err);
-            }
+              const result = await handleMerchantLogin(
+                {
+                  merchantId,
+                  email,
+                  displayName,
+                  businessName,
+                  category: data.business.category,
+                  phone: data.business.phone,
+                  location: data.business.location,
+                },
+                {
+                  onUpdateBusiness: (biz) => handleUpdateBusiness(biz),
+                  isCancelled: () => setupCancelledRef.current,
+                  timeoutMs: 15000,
+                }
+              );
 
-            handleUpdateBusiness({
-              name: finalBizName,
-              category: finalCategory,
-              phone: finalPhone,
-              ownerName: finalOwnerName,
-              location: finalLocation,
-            });
-            const isDemo = merchantId === 'biz_luma_main';
-            await StorageService.setBusinessContext(
-              merchantId,
-              AuthService.getCurrentUser()?.uid || 'merchant_user',
-              {
-                name: finalBizName,
-                ownerName: finalOwnerName,
-              },
-              isDemo
-            );
-            setPortalMode('merchant');
-            setActiveView('dashboard');
-            addToast('success', 'Signed In', `Welcome to ${finalBizName}, ${finalOwnerName}!`);
+              if (result.cancelled || setupCancelledRef.current) {
+                return;
+              }
+
+              if (result.success) {
+                setPortalMode('merchant');
+                setActiveView('dashboard');
+                addToast('success', 'Signed In', `Welcome to ${result.business.name}, ${result.business.ownerName}!`);
+              }
+            } catch (err: any) {
+              console.error('Error setting up business context:', err);
+              addToast('error', 'Setup Error', err?.message || 'Could not initialize store workspace.');
+            } finally {
+              setIsSettingUp(false);
+            }
           }}
           onLoginAsSuperAdmin={() => {
             setPortalMode('superadmin');

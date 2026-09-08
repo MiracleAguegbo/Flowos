@@ -74,6 +74,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('auth/popup-closed-by-user')) {
         setErrorMessage('Google Sign-In was cancelled before completing.');
+      } else if (msg.includes('auth/unauthorized-domain')) {
+        setErrorMessage(
+          `Domain not authorized: "${window.location.hostname}" is not listed in Firebase Console -> Authentication -> Settings -> Authorized Domains. You can use Email/Password sign-in below, or add this hostname to Firebase.`
+        );
       } else {
         setErrorMessage(`Sign-in error: ${msg}`);
       }
