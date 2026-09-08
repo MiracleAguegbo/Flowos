@@ -55,7 +55,17 @@ export class AuthService {
   }
 
   static onAuthChange(callback: (user: FirebaseUser | null) => void) {
-    return onAuthStateChanged(auth, callback);
+    return onAuthStateChanged(auth, (user) => {
+      // (1) inside onAuthChange, log the exact firebaseUser object it receives (or confirm it's null)
+      console.log('(1) [AuthService.onAuthChange] Received user from onAuthStateChanged:', user ? {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
+        isAnonymous: user.isAnonymous,
+        emailVerified: user.emailVerified,
+      } : null);
+      callback(user);
+    });
   }
 
   static getCurrentUser(): FirebaseUser | null {

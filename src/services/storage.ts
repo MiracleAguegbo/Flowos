@@ -156,6 +156,12 @@ class StorageService {
     initialMeta?: Partial<Business>,
     isDemoMode: boolean = false
   ): Promise<void> {
+    // (2) log the businessId being passed into setBusinessContext
+    console.log('(2) [setBusinessContext] businessId passed into setBusinessContext:', businessId, {
+      userId,
+      isDemoMode,
+      initialMeta,
+    });
     // 1. Guard: if listeners are already attached for this business, merge updated meta and return
     if (this.currentBusinessId === businessId && this.unsubs.length > 0) {
       if (initialMeta) {
@@ -270,7 +276,13 @@ class StorageService {
     const bizPath = `businesses/${businessId}`;
     try {
       const bizDocRef = doc(db, 'businesses', businessId);
+      // (3) log whether the getDoc check for that business document succeeds or fails
+      console.log('(3) [ensureBusinessDocumentAndSeed] Executing getDoc check for business document path:', bizPath);
       const snap = await getDoc(bizDocRef);
+      console.log('(3) [ensureBusinessDocumentAndSeed] getDoc check SUCCEEDED for', bizPath, {
+        exists: snap.exists(),
+        id: snap.id,
+      });
 
       if (!snap.exists()) {
         // Step 1: Write and commit the Business Document first so that the parent document
@@ -377,7 +389,11 @@ class StorageService {
           await setDoc(kbRef, realKb);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
+      console.error('(3) [ensureBusinessDocumentAndSeed] getDoc or initial setup FAILED for', bizPath, ':', {
+        message: err?.message,
+        code: err?.code,
+      });
       handleFirestoreError(err, OperationType.WRITE, bizPath);
     }
   }

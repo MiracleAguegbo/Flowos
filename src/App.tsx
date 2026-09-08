@@ -63,42 +63,76 @@ export default function App() {
     });
 
     const unsubscribeAuth = AuthService.onAuthChange(async (firebaseUser) => {
+      // (1) inside onAuthChange, log the exact firebaseUser object it receives (or confirm it's null)
+      console.log('(1) [onAuthChange] firebaseUser received:', firebaseUser ? {
+        uid: firebaseUser.uid,
+        email: firebaseUser.email,
+        displayName: firebaseUser.displayName,
+        isAnonymous: firebaseUser.isAnonymous,
+        emailVerified: firebaseUser.emailVerified,
+      } : null);
+
       if (firebaseUser) {
         try {
           const profile = await AuthService.syncUserProfile(firebaseUser);
           
           // Check if this business document already exists in Firestore
           const bizDocRef = doc(db, 'businesses', profile.businessId);
-          const bizSnap = await getDoc(bizDocRef);
+          console.log('(3) [getDoc check] Initiating getDoc check for business document path:', `businesses/${profile.businessId}`);
+          try {
+            const bizSnap = await getDoc(bizDocRef);
+            console.log('(3) [getDoc check] getDoc check SUCCEEDED. Exists:', bizSnap.exists(), 'Data:', bizSnap.exists() ? bizSnap.data() : null);
 
-          if (bizSnap.exists()) {
-            // RETURNING USER / SESSION RESTORE:
-            // The business document already exists in Firestore.
-            // Safely attach to it without re-creating, guessing or overwriting.
-            const existingBizData = bizSnap.data();
-            await StorageService.setBusinessContext(
-              profile.businessId,
-              profile.id,
-              {
-                name: existingBizData?.name || 'My Store',
-                ownerName: existingBizData?.ownerName || profile.displayName || 'Merchant Owner',
-                category: existingBizData?.category || 'Retail',
-                phone: existingBizData?.phone || '',
-                location: existingBizData?.location || '',
-              },
-              false
-            );
-            setPortalMode('merchant');
-          } else {
-            // NEW SIGN-UP IN PROGRESS:
-            // The business document does NOT exist in Firestore yet!
-            // CRITICAL: DO NOT write or seed a dummy business document here.
-            // Leaving creation to onLoginAsMerchant ensures EXACTLY ONE authoritative code path
-            // writes the business document with the merchant's exact typed business name and owner name.
+            if (bizSnap.exists()) {
+              // RETURNING USER / SESSION RESTORE:
+              // The business document already exists in Firestore.
+              // Safely attach to it without re-creating, guessing or overwriting.
+              const existingBizData = bizSnap.data();
+              console.log('(2) [setBusinessContext] Passing businessId into setBusinessContext from session restore:', profile.businessId);
+              await StorageService.setBusinessContext(
+                profile.businessId,
+                profile.id,
+                {
+                  name: existingBizData?.name || 'My Store',
+                  ownerName: existingBizData?.ownerName || profile.displayName || 'Merchant Owner',
+                  category: existingBizData?.category || 'Retail',
+                  phone: existingBizData?.phone || '',
+                  location: existingBizData?.location || '',
+                },
+                false
+              );
+              setPortalMode('merchant');
+            } else {
+              // AUTHENTICATED USER WITH NO FIRESTORE BUSINESS DOC YET:
+              // Provision their business immediately so they never remain stuck on the demo store!
+              const defaultBizName = profile.displayName ? `${profile.displayName}'s Store` : 'My WhatsApp Store';
+              const defaultOwnerName = profile.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'Merchant Owner');
+              console.log('(2) [setBusinessContext] Auto-provisioning business for newly authenticated user:', profile.businessId);
+              await StorageService.setBusinessContext(
+                profile.businessId,
+                profile.id,
+                {
+                  name: defaultBizName,
+                  ownerName: defaultOwnerName,
+                  category: 'Retail',
+                  phone: '',
+                  location: '',
+                },
+                false
+              );
+              setPortalMode('merchant');
+            }
+          } catch (getDocError: any) {
+            console.error('(3) [getDoc check] getDoc check FAILED for business document:', profile.businessId, {
+              message: getDocError?.message,
+              code: getDocError?.code,
+            });
           }
         } catch (err) {
           console.error('Error syncing auth profile:', err);
         }
+      } else {
+        console.log('(1) [onAuthChange] User is null. Showing unauthenticated or default state.');
       }
     });
 

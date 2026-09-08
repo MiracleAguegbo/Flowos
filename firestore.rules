@@ -17,7 +17,7 @@ service cloud.firestore {
 
     // Check if the requesting user is an explicitly listed member in the business document data
     function isListedMemberOfDoc(businessData) {
-      return isSignedIn() && (
+      return isSignedIn() && businessData != null && (
         ('members' in businessData && businessData.members is list && request.auth.uid in businessData.members) ||
         ('members' in businessData && businessData.members is map && request.auth.uid in businessData.members) ||
         ('memberUids' in businessData && businessData.memberUids is list && request.auth.uid in businessData.memberUids) ||
@@ -40,8 +40,9 @@ service cloud.firestore {
 
     // Businesses Collection: access strictly restricted to listed members of that specific business
     match /businesses/{businessId} {
-      // Direct get: Only allowed if the requesting user's UID is a listed member in that specific business document
-      allow get: if isSignedIn() && isListedMemberOfDoc(resource.data);
+      // Direct get: Allowed if user is a listed member, OR if document does not exist yet (resource == null)
+      // to permit existence checks via snap.exists() without throwing permission-denied.
+      allow get: if isSignedIn() && (resource == null || isListedMemberOfDoc(resource.data));
 
       // List query: Only allowed when query is scoped to businesses where the user is an owner or member
       allow list: if isSignedIn() && (
