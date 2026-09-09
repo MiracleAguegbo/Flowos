@@ -62,7 +62,11 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
           <span className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200/60">
             <span className="w-1.5 h-1.5 bg-[#2563EB] rounded-full animate-pulse"></span>
-            {whatsAppConfig?.status === 'connected' ? 'WhatsApp Connected' : 'WhatsApp Business • Demo Connected'}
+            {whatsAppConfig?.status === 'connected'
+              ? 'WhatsApp Connected'
+              : whatsAppConfig?.status === 'demo_connected'
+              ? 'WhatsApp Business • Demo Connected'
+              : 'WhatsApp: Ready to Connect'}
           </span>
         </div>
 

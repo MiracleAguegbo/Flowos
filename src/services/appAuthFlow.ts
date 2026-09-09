@@ -209,7 +209,7 @@ export async function handleMerchantLogin(
     };
   }
 
-  const isDemo = params.merchantId === 'biz_luma_main';
+  const isDemo = params.merchantId === 'biz_luma_main' || params.merchantId === 'biz_luma_01';
   const userId = getUserIdFn();
 
   // Timeout safeguard: Reject after timeoutMs so caller is never stuck indefinitely

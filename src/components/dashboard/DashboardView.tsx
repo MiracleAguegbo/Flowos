@@ -15,6 +15,7 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import { StageBadge, PaymentBadge } from '../common/Badge';
+import { StorageServiceFacade as StorageService } from '../../services/storage';
 
 interface DashboardViewProps {
   metrics: DashboardMetrics;
@@ -42,7 +43,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const urgentFollowUps = followUps.filter((f) => f.status === 'pending').slice(0, 4);
   const currency = business?.currency || '₦';
-  const isDemo = business?.id === 'biz_luma_main' || business?.id === 'biz_luma_01';
+  const isDemo =
+    business?.id === 'biz_luma_main' ||
+    business?.id === 'biz_luma_01' ||
+    StorageService.isDemoStore();
 
   // Sales funnel counts
   const newLeadsCount = leads.filter((l) => l.stage === 'NEW_LEAD').length || (isDemo ? 87 : 0);
@@ -52,7 +56,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const paidCount = leads.filter((l) => l.stage === 'PAID' || l.stage === 'COMPLETED').length || (isDemo ? 25 : 0);
   const maxFunnelCount = Math.max(newLeadsCount, interestedCount, productSelectedCount, awaitingPaymentCount, paidCount, 1);
 
-  const greetingName = userDisplayName || business?.ownerName || 'there';
+  const greetingName = business?.ownerName || userDisplayName || (isDemo ? 'Amaka' : 'there');
   const bizName = business?.name || 'your store';
 
   return (
@@ -93,9 +97,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <p className="text-xl font-bold text-[#111827]">
             {currency}{metrics.revenueToday.toLocaleString()}
           </p>
-          <p className="text-xs text-green-600 font-medium mt-2 flex items-center gap-1">
-            <span>↑ 12% from yesterday</span>
-          </p>
+          {isDemo ? (
+            <p className="text-xs text-green-600 font-medium mt-2 flex items-center gap-1">
+              <span>↑ 12% from yesterday</span>
+            </p>
+          ) : metrics.revenueToday > 0 ? (
+            <p className="text-xs text-green-600 font-medium mt-2 flex items-center gap-1">
+              <span>Active sales recorded today</span>
+            </p>
+          ) : (
+            <p className="text-xs text-[#9CA3AF] mt-2">No transactions recorded today</p>
+          )}
         </div>
 
         <div className="bg-white p-5 rounded-xl border border-[#E5E7EB]">
@@ -240,67 +252,75 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="text-sm divide-y divide-[#F3F4F6]">
-                {urgentFollowUps.map((item) => {
-                  const initials = item.customerName
-                    .split(' ')
-                    .map((n) => n[0])
-                    .join('')
-                    .slice(0, 2)
-                    .toUpperCase();
-                  const isPendingPayment =
-                    item.reason.toLowerCase().includes('payment') ||
-                    item.reason.toLowerCase().includes('account');
+                {urgentFollowUps.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-xs text-[#9CA3AF]">
+                      No pending follow-ups. Customer inquiries and payment reminders will appear here.
+                    </td>
+                  </tr>
+                ) : (
+                  urgentFollowUps.map((item) => {
+                    const initials = item.customerName
+                      .split(' ')
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase();
+                    const isPendingPayment =
+                      item.reason.toLowerCase().includes('payment') ||
+                      item.reason.toLowerCase().includes('account');
 
-                  return (
-                    <tr key={item.id} className="hover:bg-[#F9FAFB] transition-colors">
-                      <td className="py-3.5 flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-full bg-blue-50 text-[#2563EB] flex items-center justify-center text-xs font-bold shrink-0">
-                          {initials}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-medium text-[#111827] text-xs leading-tight">
-                            {item.customerName}
-                          </p>
-                          <p className="text-[10px] text-[#9CA3AF] leading-tight mt-0.5">
-                            Lekki, Lagos
-                          </p>
-                        </div>
-                      </td>
-                      <td className="py-3.5 font-bold text-[#111827] text-xs">
-                        ₦{item.potentialValue.toLocaleString()}
-                      </td>
-                      <td className="py-3.5">
-                        {isPendingPayment ? (
-                          <span className="px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-200/60">
-                            PENDING PAYMENT
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-bold border border-blue-200/60">
-                            INTERESTED
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 text-xs text-[#6B7280] max-w-xs truncate">
-                        {item.reason}
-                      </td>
-                      <td className="py-3.5 text-right">
-                        <button
-                          onClick={() =>
-                            onOpenChat(
-                              item.customerId,
-                              `Hello Queen ${
-                                item.customerName.split(' ')[0]
-                              }! Following up from Luma Fashion regarding your order reservation. Can we reserve this for you today?`
-                            )
-                          }
-                          className="text-[#2563EB] font-bold text-xs hover:underline cursor-pointer"
-                        >
-                          {isPendingPayment ? 'Remind' : 'Follow up'}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                    return (
+                      <tr key={item.id} className="hover:bg-[#F9FAFB] transition-colors">
+                        <td className="py-3.5 flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-blue-50 text-[#2563EB] flex items-center justify-center text-xs font-bold shrink-0">
+                            {initials}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium text-[#111827] text-xs leading-tight">
+                              {item.customerName}
+                            </p>
+                            <p className="text-[10px] text-[#9CA3AF] leading-tight mt-0.5">
+                              Lekki, Lagos
+                            </p>
+                          </div>
+                        </td>
+                        <td className="py-3.5 font-bold text-[#111827] text-xs">
+                          ₦{item.potentialValue.toLocaleString()}
+                        </td>
+                        <td className="py-3.5">
+                          {isPendingPayment ? (
+                            <span className="px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-200/60">
+                              PENDING PAYMENT
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-bold border border-blue-200/60">
+                              INTERESTED
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 text-xs text-[#6B7280] max-w-xs truncate">
+                          {item.reason}
+                        </td>
+                        <td className="py-3.5 text-right">
+                          <button
+                            onClick={() =>
+                              onOpenChat(
+                                item.customerId,
+                                `Hello ${
+                                  item.customerName.split(' ')[0]
+                                }! Following up from ${business?.name || 'our store'} regarding your order reservation. Can we reserve this for you today?`
+                              )
+                            }
+                            className="text-[#2563EB] font-bold text-xs hover:underline cursor-pointer"
+                          >
+                            {isPendingPayment ? 'Remind' : 'Follow up'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -323,32 +343,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="divide-y divide-[#F3F4F6]">
-            {conversations.slice(0, 4).map((conv) => (
-              <div
-                key={conv.id}
-                onClick={() => onOpenChat(conv.customerId)}
-                className="py-3 flex items-center justify-between hover:bg-[#F9FAFB] cursor-pointer px-2 rounded-md transition-colors"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-[#F3F4F6] text-[#4B5563] flex items-center justify-center font-bold text-xs shrink-0">
-                    {conv.customerName.charAt(0)}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-semibold text-xs text-[#111827] truncate">
-                      {conv.customerName}
-                    </p>
-                    <p className="text-[11px] text-[#6B7280] truncate max-w-xs">
-                      {conv.lastMessage}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="text-right shrink-0">
-                  <span className="text-[10px] text-[#9CA3AF] block">{conv.lastMessageTime}</span>
-                  <StageBadge stage={conv.leadStage} size="sm" />
-                </div>
+            {conversations.length === 0 ? (
+              <div className="py-8 text-center text-xs text-[#9CA3AF]">
+                No active WhatsApp conversations yet. Inbound inquiries will appear here.
               </div>
-            ))}
+            ) : (
+              conversations.slice(0, 4).map((conv) => (
+                <div
+                  key={conv.id}
+                  onClick={() => onOpenChat(conv.customerId)}
+                  className="py-3 flex items-center justify-between hover:bg-[#F9FAFB] cursor-pointer px-2 rounded-md transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-[#F3F4F6] text-[#4B5563] flex items-center justify-center font-bold text-xs shrink-0">
+                      {conv.customerName.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-xs text-[#111827] truncate">
+                        {conv.customerName}
+                      </p>
+                      <p className="text-[11px] text-[#6B7280] truncate max-w-xs">
+                        {conv.lastMessage}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[10px] text-[#9CA3AF] block">{conv.lastMessageTime}</span>
+                    <StageBadge stage={conv.leadStage} size="sm" />
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -376,18 +402,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="text-xs divide-y divide-[#F3F4F6]">
-                {recentOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-[#F9FAFB] transition-colors">
-                    <td className="py-2.5 font-semibold text-[#111827]">{order.orderNumber}</td>
-                    <td className="py-2.5 text-[#4B5563]">{order.customerName}</td>
-                    <td className="py-2.5 font-bold text-[#111827]">
-                      ₦{order.total.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 text-right">
-                      <PaymentBadge status={order.paymentStatus} size="sm" />
+                {recentOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-xs text-[#9CA3AF]">
+                      No customer orders recorded yet. Completed and pending orders will appear here.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  recentOrders.map((order) => (
+                    <tr key={order.id} className="hover:bg-[#F9FAFB] transition-colors">
+                      <td className="py-2.5 font-semibold text-[#111827]">{order.orderNumber}</td>
+                      <td className="py-2.5 text-[#4B5563]">{order.customerName}</td>
+                      <td className="py-2.5 font-bold text-[#111827]">
+                        ₦{order.total.toLocaleString()}
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <PaymentBadge status={order.paymentStatus} size="sm" />
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

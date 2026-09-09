@@ -471,7 +471,7 @@ Would you like me to reserve this for you today?`;
                     <StageBadge stage={activeConv.leadStage} size="sm" />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    {activeConv.customerPhone} • Inbound WhatsApp Thread • Assigned to {activeConv.assignedTeamMember || 'Amaka (Owner)'}
+                    {activeConv.customerPhone} • Inbound WhatsApp Thread • Assigned to {activeConv.assignedTeamMember || (business?.ownerName ? `${business.ownerName} (Owner)` : 'Amaka (Owner)')}
                   </p>
                 </div>
               </div>
@@ -732,7 +732,7 @@ Would you like me to reserve this for you today?`;
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Assigned Team:</span>
-                <span className="font-medium text-slate-900">{activeConv?.assignedTeamMember || 'Amaka (Owner)'}</span>
+                <span className="font-medium text-slate-900">{activeConv?.assignedTeamMember || (business?.ownerName ? `${business.ownerName} (Owner)` : 'Amaka (Owner)')}</span>
               </div>
             </div>
           </div>

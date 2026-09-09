@@ -99,10 +99,20 @@ class StorageService {
   private unsubs: Unsubscribe[] = [];
   private currentBusinessId: string = DEMO_BUSINESS.id;
   private currentUserId: string = DEMO_USER.id;
+  private isDemoMode: boolean = true;
   private isFirebaseSyncing = false;
   private isConnecting = false;
   private connectingPromise: Promise<void> | null = null;
   private inFlightInbound: Map<string, Promise<void>> = new Map();
+
+  public isDemoStore(): boolean {
+    return (
+      this.isDemoMode ||
+      this.currentBusinessId === DEMO_BUSINESS.id ||
+      this.currentBusinessId === 'biz_luma_main' ||
+      this.currentBusinessId === 'biz_luma_01'
+    );
+  }
 
   constructor() {
     this.user = { ...DEMO_USER };
@@ -199,6 +209,12 @@ class StorageService {
       }
     }
 
+    const isDemoStore =
+      isDemoMode ||
+      businessId === DEMO_BUSINESS.id ||
+      businessId === 'biz_luma_main' ||
+      businessId === 'biz_luma_01';
+    this.isDemoMode = isDemoStore;
     this.currentBusinessId = businessId;
     this.currentUserId = userId;
 
@@ -211,9 +227,28 @@ class StorageService {
       memberUids: [userId],
     };
 
-    // If this is a real merchant sign-up (isDemoMode = false and not default demo tenant),
-    // clear in-memory arrays so the user starts with a clean empty business.
-    if (!isDemoMode && businessId !== 'biz_luma_main') {
+    // Update user profile representation to match active business context
+    if (isDemoStore) {
+      this.user = { ...DEMO_USER };
+    } else {
+      const resolvedDisplayName =
+        initialMeta?.ownerName ||
+        auth.currentUser?.displayName ||
+        (auth.currentUser?.email ? auth.currentUser.email.split('@')[0] : '') ||
+        'Store Owner';
+
+      this.user = {
+        id: userId,
+        email: auth.currentUser?.email || this.user.email || '',
+        displayName: resolvedDisplayName,
+        businessId: businessId,
+        role: 'owner',
+        createdAt: this.user.createdAt || new Date().toISOString(),
+      };
+    }
+
+    // If this is a real merchant account, clear in-memory arrays so the user starts with a clean empty business.
+    if (!isDemoStore) {
       this.customers = [];
       this.orders = [];
       this.products = [];
@@ -567,6 +602,9 @@ class StorageService {
   }
 
   public async resetToDemoData() {
+    this.currentBusinessId = DEMO_BUSINESS.id;
+    this.currentUserId = DEMO_USER.id;
+    this.isDemoMode = true;
     this.user = { ...DEMO_USER };
     this.business = {
       ...DEMO_BUSINESS,
@@ -1054,10 +1092,7 @@ class StorageService {
     const activeFollowUps = this.followUps.filter((f) => f.status === 'pending');
     const recoverableRevenue = activeFollowUps.reduce((sum, f) => sum + f.potentialValue, 0);
 
-    const isDefaultDemo =
-      messagingService.getConfig().isDemoMode ||
-      this.currentBusinessId === 'biz_luma_main' ||
-      this.currentBusinessId === DEMO_BUSINESS.id;
+    const isDefaultDemo = this.isDemoStore();
 
     if (!isDefaultDemo) {
       const todayStr = new Date().toISOString().split('T')[0];
@@ -1584,6 +1619,10 @@ export class StorageServiceFacade {
 
   static getListenerCount(): number {
     return storage.getListenerCount();
+  }
+
+  static isDemoStore(): boolean {
+    return storage.isDemoStore();
   }
 
   static isConnectingContext(): boolean {

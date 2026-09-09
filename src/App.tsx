@@ -438,6 +438,11 @@ export default function App() {
   // 3. MERCHANT STORE WORKSPACE
   // (Merchants only see their own store. No Super-Admin controls.)
   // ==========================================
+  const isDemoStore =
+    data.business.id === 'biz_luma_main' ||
+    data.business.id === 'biz_luma_01' ||
+    StorageService.isDemoStore();
+
   return (
     <div className="flex h-screen bg-[#F9FAFB] text-[#111827] overflow-hidden font-sans flex-col">
       {/* Super-Admin Impersonation Banner (ONLY shown when platform owner is inspecting a tenant) */}
@@ -512,7 +517,7 @@ export default function App() {
                 recentOrders={data.orders.slice(0, 5)}
                 conversations={data.conversations}
                 business={data.business}
-                userDisplayName={data.user?.displayName}
+                userDisplayName={data.business?.ownerName || data.user?.displayName}
                 onNavigate={setActiveView}
                 onOpenChat={handleOpenChat}
                 onUpdateLeadStage={handleUpdateLeadStage}
@@ -717,14 +722,29 @@ export default function App() {
         {/* Bottom Bar / Quick Actions (Clean Minimalism Theme) */}
         <div className="h-10 bg-[#1F2937] text-white flex items-center justify-between px-4 sm:px-8 text-xs font-medium shrink-0">
           <div className="flex items-center gap-3 sm:gap-4">
-            <span className="text-[#9CA3AF] text-[11px] tracking-wider uppercase">
-              DEMO MODE ACTIVE
-            </span>
-            <div className="w-[1px] h-3.5 bg-[#4B5563]"></div>
-            <span className="flex items-center gap-1.5 text-slate-200 text-[11px]">
-              <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
-              ₦8.4M Monthly Revenue Tracked
-            </span>
+            {isDemoStore ? (
+              <>
+                <span className="text-[#9CA3AF] text-[11px] tracking-wider uppercase">
+                  DEMO MODE ACTIVE
+                </span>
+                <div className="w-[1px] h-3.5 bg-[#4B5563]"></div>
+                <span className="flex items-center gap-1.5 text-slate-200 text-[11px]">
+                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
+                  ₦8.4M Monthly Revenue Tracked
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="text-emerald-400 text-[11px] tracking-wider uppercase font-semibold">
+                  LIVE WORKSPACE
+                </span>
+                <div className="w-[1px] h-3.5 bg-[#4B5563]"></div>
+                <span className="flex items-center gap-1.5 text-slate-200 text-[11px]">
+                  <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></span>
+                  {data.business.currency || '₦'}{data.metrics.revenueThisMonth.toLocaleString()} Revenue Tracked
+                </span>
+              </>
+            )}
           </div>
           <div className="hidden sm:flex items-center gap-6 text-[11px] text-slate-300">
             <span

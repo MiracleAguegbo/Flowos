@@ -221,41 +221,53 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* User Account / Profile Footer */}
         <div className="mt-auto p-6 border-t border-[#E5E7EB]">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full bg-[#E5E7EB] border border-[#D1D5DB] flex items-center justify-center font-bold text-[#4B5563] text-sm shrink-0">
-                {user?.displayName ? user.displayName.slice(0, 2).toUpperCase() : 'AM'}
+          {(() => {
+            const ownerDisplayName = business?.ownerName || user?.displayName || 'Amaka M.';
+            const initials = ownerDisplayName
+              .split(' ')
+              .map((n) => n[0])
+              .join('')
+              .slice(0, 2)
+              .toUpperCase() || 'AM';
+
+            return (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-full bg-[#E5E7EB] border border-[#D1D5DB] flex items-center justify-center font-bold text-[#4B5563] text-sm shrink-0">
+                    {initials}
+                  </div>
+                  <div className="min-w-0 overflow-hidden">
+                    <p className="text-sm font-semibold text-[#111827] truncate">
+                      {ownerDisplayName}
+                    </p>
+                    <p className="text-xs text-[#9CA3AF] truncate">
+                      {business?.name || 'Luma Fashion'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    id="sidebar-settings-shortcut"
+                    onClick={() => handleNavigate('settings')}
+                    className="p-1.5 rounded-md text-[#9CA3AF] hover:text-[#4B5563] hover:bg-[#F3F4F6] transition-colors"
+                    title="Settings"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                  {onLogout && (
+                    <button
+                      id="sidebar-logout-button"
+                      onClick={onLogout}
+                      className="p-1.5 rounded-md text-[#9CA3AF] hover:text-red-600 hover:bg-red-50 transition-colors"
+                      title="Sign Out / Switch Portal"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="min-w-0 overflow-hidden">
-                <p className="text-sm font-semibold text-[#111827] truncate">
-                  {user?.displayName || 'Amaka M.'}
-                </p>
-                <p className="text-xs text-[#9CA3AF] truncate">
-                  {business?.name || 'Luma Fashion'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                id="sidebar-settings-shortcut"
-                onClick={() => handleNavigate('settings')}
-                className="p-1.5 rounded-md text-[#9CA3AF] hover:text-[#4B5563] hover:bg-[#F3F4F6] transition-colors"
-                title="Settings"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
-              {onLogout && (
-                <button
-                  id="sidebar-logout-button"
-                  onClick={onLogout}
-                  className="p-1.5 rounded-md text-[#9CA3AF] hover:text-red-600 hover:bg-red-50 transition-colors"
-                  title="Sign Out / Switch Portal"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
+            );
+          })()}
         </div>
       </aside>
     </>
