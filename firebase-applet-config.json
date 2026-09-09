@@ -3,7 +3,7 @@
   "appId": "1:188545673936:web:acbc857cd11a7707290cd5",
   "apiKey": "AIzaSyA05DxtDICBIKCjNqjq92ZBfhad7euRBoI",
   "authDomain": "flowos-prod.firebaseapp.com",
-  "firestoreDatabaseId": "(default)",
+  "firestoreDatabaseId": "ai-studio-flowos-f141f8c5-b35c-43a5-a429-a09b348bf234",
   "storageBucket": "flowos-prod.firebasestorage.app",
   "messagingSenderId": "188545673936",
   "measurementId": "",
