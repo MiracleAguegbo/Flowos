@@ -105,12 +105,13 @@ class StorageService {
   private connectingPromise: Promise<void> | null = null;
   private inFlightInbound: Map<string, Promise<void>> = new Map();
 
-  public isDemoStore(): boolean {
+  public isDemoStore(businessId?: string): boolean {
+    const targetId = businessId || this.currentBusinessId;
     return (
-      this.isDemoMode ||
-      this.currentBusinessId === DEMO_BUSINESS.id ||
-      this.currentBusinessId === 'biz_luma_main' ||
-      this.currentBusinessId === 'biz_luma_01'
+      (businessId ? false : this.isDemoMode) ||
+      targetId === DEMO_BUSINESS.id ||
+      targetId === 'biz_luma_main' ||
+      targetId === 'biz_luma_01'
     );
   }
 
@@ -256,6 +257,26 @@ class StorageService {
       this.followUps = [];
       this.conversations = [];
       this.messages = [];
+      messagingService.updateConfig({
+        status: 'not_connected',
+        isDemoMode: false,
+        businessAccountId: `WABA_${businessId.toUpperCase().slice(0, 12)}`,
+        businessAccountName: this.business.name || 'Business Account',
+        verifiedName: this.business.name || 'Business Account',
+        phoneNumber: this.business.phone || '',
+        phoneNumberDisplay: this.business.phone || '',
+      });
+    } else {
+      messagingService.setDemoMode(true);
+      messagingService.updateConfig({
+        status: 'demo_connected',
+        isDemoMode: true,
+        businessAccountId: 'WABA_LUMA_902188',
+        businessAccountName: 'LUMA FASHION',
+        verifiedName: 'Luma Fashion Official',
+        phoneNumber: '+2348145550192',
+        phoneNumberDisplay: '+234 814 555 0192',
+      });
     }
 
     // Detach any previous listeners
@@ -294,6 +315,7 @@ class StorageService {
       }
     });
     this.unsubs = [];
+    this.messageUnsubs.clear();
   }
 
   /**
@@ -517,6 +539,7 @@ class StorageService {
       collection(db, 'businesses', businessId, 'leads'),
       (snap) => {
         this.leads = snap.docs.map((d) => d.data() as Lead);
+        this.ensureLeadsForConversationsSync(businessId);
         this.notifyListeners();
       },
       (error) => {
@@ -546,6 +569,7 @@ class StorageService {
       (snap) => {
         this.conversations = snap.docs.map((d) => d.data() as Conversation);
         this.syncConversationMessages(businessId, this.conversations);
+        this.ensureLeadsForConversationsSync(businessId);
         this.notifyListeners();
       },
       (error) => {
@@ -559,15 +583,36 @@ class StorageService {
 
   private syncConversationMessages(businessId: string, conversations: Conversation[]) {
     conversations.forEach((conv) => {
+      if (!conv?.id) return;
       if (!this.messageUnsubs.has(conv.id)) {
         const msgPath = `businesses/${businessId}/conversations/${conv.id}/messages`;
         const unsub = onSnapshot(
           collection(db, 'businesses', businessId, 'conversations', conv.id, 'messages'),
           (snap) => {
-            const newMessages = snap.docs.map((d) => d.data() as Message);
-            // Merge with local messages preserving uniqueness
-            const otherMessages = this.messages.filter((m) => m.conversationId !== conv.id);
-            this.messages = [...otherMessages, ...newMessages];
+            const newMessages = snap.docs.map((d) => {
+              const data = d.data() as Message;
+              return {
+                ...data,
+                id: data.id || d.id,
+                conversationId: data.conversationId || conv.id,
+              };
+            });
+
+            // Merge with local messages strictly preserving uniqueness by message ID
+            const newMsgIdSet = new Set(newMessages.map((m) => m.id));
+            const otherMessages = this.messages.filter(
+              (m) => m.conversationId !== conv.id && !newMsgIdSet.has(m.id)
+            );
+
+            const messageMap = new Map<string, Message>();
+            for (const m of otherMessages) {
+              if (m?.id) messageMap.set(m.id, m);
+            }
+            for (const m of newMessages) {
+              if (m?.id) messageMap.set(m.id, m);
+            }
+
+            this.messages = Array.from(messageMap.values());
             this.notifyListeners();
           },
           (error) => {
@@ -622,6 +667,17 @@ class StorageService {
     this.orders = DEMO_ORDERS.map((o) => ({ ...o, businessId: this.currentBusinessId }));
     this.followUps = DEMO_FOLLOW_UPS.map((f) => ({ ...f, businessId: this.currentBusinessId }));
     this.notifications = [...DEMO_NOTIFICATIONS];
+
+    messagingService.setDemoMode(true);
+    messagingService.updateConfig({
+      status: 'demo_connected',
+      isDemoMode: true,
+      businessAccountId: 'WABA_LUMA_902188',
+      businessAccountName: 'LUMA FASHION',
+      verifiedName: 'Luma Fashion Official',
+      phoneNumber: '+2348145550192',
+      phoneNumberDisplay: '+234 814 555 0192',
+    });
 
     if (auth.currentUser) {
       await this.ensureBusinessDocumentAndSeed(
@@ -759,7 +815,12 @@ class StorageService {
       },
     };
 
-    this.messages.push(newMessage);
+    const existingMsgIdx = this.messages.findIndex((m) => m.id === newMessage.id);
+    if (existingMsgIdx >= 0) {
+      this.messages[existingMsgIdx] = newMessage;
+    } else {
+      this.messages.push(newMessage);
+    }
 
     // Update conversation lastMessage & time
     const convIndex = this.conversations.findIndex((c) => c.id === conversationId);
@@ -827,7 +888,115 @@ class StorageService {
   }
 
   // Leads & Pipeline
+  public ensureLeadsForConversationsSync(businessId?: string): void {
+    const bizId = businessId || this.currentBusinessId;
+    if (!bizId || this.isDemoStore()) return;
+
+    let hasNew = false;
+    for (const conv of this.conversations) {
+      if (!conv.customerId && !conv.id) continue;
+      const targetCustId = conv.customerId || `cust_${conv.id}`;
+      const existing = this.leads.find(
+        (l) => l.customerId === targetCustId || l.id === `lead_${targetCustId}`
+      );
+      if (!existing) {
+        let detectedProduct = 'General Inquiry';
+        let detectedValue = conv.estimatedOrderValue || 0;
+        const lastMsg = (conv.lastMessage || '').toLowerCase();
+        if (lastMsg.includes('ankara')) {
+          detectedProduct = 'Ankara Print Peplum Midi Dress';
+          detectedValue = detectedValue || 38000;
+        } else if (lastMsg.includes('emerald')) {
+          detectedProduct = 'Emerald Green Evening Wrap Dress';
+          detectedValue = detectedValue || 125000;
+        } else if (lastMsg.includes('linen')) {
+          detectedProduct = 'Classic Crisp Linen Shirt';
+          detectedValue = detectedValue || 45000;
+        } else {
+          const matchedProd = this.products.find(
+            (p) => p.name && lastMsg.includes(p.name.toLowerCase())
+          );
+          if (matchedProd) {
+            detectedProduct = matchedProd.name;
+            detectedValue = detectedValue || matchedProd.price;
+          } else if (conv.lastMessage) {
+            detectedProduct = conv.lastMessage;
+          }
+        }
+
+        const newLead: Lead = {
+          id: `lead_${targetCustId}`,
+          businessId: bizId,
+          customerId: targetCustId,
+          customerName: conv.customerName || 'Customer',
+          productInterest: detectedProduct,
+          potentialValue: detectedValue,
+          stage: (conv.leadStage as LeadStage) || 'NEW_LEAD',
+          daysInStage: 0,
+          lastInteraction: conv.lastMessageTime || 'Just now',
+          notes: `Linked to WhatsApp thread with ${conv.customerName || 'customer'}`,
+        };
+
+        this.leads.unshift(newLead);
+        hasNew = true;
+
+        if (auth.currentUser) {
+          const leadRef = doc(db, 'businesses', bizId, 'leads', newLead.id);
+          setDoc(leadRef, newLead, { merge: true }).catch((err) => {
+            console.warn('Could not persist backfilled lead to Firestore:', err);
+          });
+        }
+      }
+    }
+
+    if (hasNew) {
+      this.notifyListeners();
+    }
+  }
+
+  public createOrUpdateLeadForCustomer(customerId: string, stage: LeadStage = 'NEW_LEAD'): Lead {
+    let lead = this.leads.find((l) => l.customerId === customerId || l.id === `lead_${customerId}`);
+    const cust = this.customers.find((c) => c.id === customerId);
+    const conv = this.conversations.find((c) => c.customerId === customerId);
+    const bizId = this.currentBusinessId;
+
+    if (lead) {
+      this.updateLeadStage(lead.id, stage);
+      return lead;
+    }
+
+    const leadId = `lead_${customerId}`;
+    lead = {
+      id: leadId,
+      businessId: bizId,
+      customerId,
+      customerName: cust?.name || conv?.customerName || 'Customer',
+      productInterest: conv?.lastMessage || 'WhatsApp Inquiry',
+      potentialValue: conv?.estimatedOrderValue || 0,
+      stage,
+      daysInStage: 0,
+      lastInteraction: 'Just now',
+      notes: `Lead for customer ${cust?.name || customerId}`,
+    };
+
+    this.leads.unshift(lead);
+
+    if (auth.currentUser) {
+      const leadPath = `businesses/${bizId}/leads/${lead.id}`;
+      const leadRef = doc(db, 'businesses', bizId, 'leads', lead.id);
+      setDoc(leadRef, lead, { merge: true }).catch((err) => {
+        handleFirestoreError(err, OperationType.CREATE, leadPath);
+      });
+    }
+
+    this.notify();
+    return lead;
+  }
+
   public getLeads(): Lead[] {
+    if (!this.isDemoStore() && this.conversations.length > 0 && this.leads.length < this.conversations.length) {
+      this.ensureLeadsForConversationsSync();
+    }
     return [...this.leads];
   }
 
@@ -879,31 +1048,79 @@ class StorageService {
 
   public addOrder(orderData: Omit<Order, 'id' | 'orderNumber' | 'businessId' | 'createdDate'>): Order {
     const orderNumber = `ORD-2025-${Math.floor(100 + Math.random() * 900)}`;
+    const isPaid = orderData.paymentStatus === 'paid';
+    const nowIso = new Date().toISOString();
     const newOrder: Order = {
       ...orderData,
       id: `ord_${Date.now()}`,
       orderNumber,
       businessId: this.currentBusinessId,
-      createdDate: new Date().toISOString(),
+      createdDate: nowIso,
+      ...(isPaid ? { paymentDate: nowIso } : {}),
     };
     this.orders.unshift(newOrder);
 
     // Update customer totalSpent and orderCount if paid
     let custUpdate: Partial<Customer> | null = null;
-    if (newOrder.paymentStatus === 'paid') {
-      const cust = this.customers.find((c) => c.id === newOrder.customerId);
-      if (cust) {
-        cust.totalSpent += newOrder.total;
-        cust.orderCount += 1;
-        cust.averageOrderValue = cust.orderCount > 0 ? Math.round(cust.totalSpent / cust.orderCount) : 0;
-        cust.lastPurchaseDate = new Date().toISOString().split('T')[0];
-        custUpdate = {
-          totalSpent: cust.totalSpent,
-          orderCount: cust.orderCount,
-          averageOrderValue: cust.averageOrderValue,
-          lastPurchaseDate: cust.lastPurchaseDate,
-        };
+    const cust = this.customers.find((c) => c.id === newOrder.customerId);
+    if (isPaid && cust) {
+      cust.totalSpent += newOrder.total;
+      cust.orderCount += 1;
+      cust.averageOrderValue = cust.orderCount > 0 ? Math.round(cust.totalSpent / cust.orderCount) : 0;
+      cust.lastPurchaseDate = nowIso.split('T')[0];
+      custUpdate = {
+        totalSpent: cust.totalSpent,
+        orderCount: cust.orderCount,
+        averageOrderValue: cust.averageOrderValue,
+        lastPurchaseDate: cust.lastPurchaseDate,
+      };
+    }
+
+    // Lead stage update
+    const lead = this.leads.find((l) => l.customerId === newOrder.customerId);
+    if (lead) {
+      this.updateLeadStage(lead.id, isPaid ? 'PAID' : 'AWAITING_PAYMENT');
+    }
+
+    // Follow-up scheduling per existing rules
+    if (isPaid) {
+      // Mark any pending payment follow-ups for this customer as completed
+      const pendingPaymentFol = this.followUps.find(
+        (f) => f.customerId === newOrder.customerId && f.category === 'payment' && f.status === 'pending'
+      );
+      if (pendingPaymentFol) {
+        this.updateFollowUpStatus(pendingPaymentFol.id, 'completed');
       }
+
+      this.addFollowUp({
+        customerId: newOrder.customerId,
+        customerName: cust ? cust.name : newOrder.customerName,
+        customerPhone: cust ? cust.phone : newOrder.customerPhone,
+        reason: `Delivery dispatch & order fulfillment for Order #${newOrder.orderNumber}`,
+        category: 'fulfillment',
+        potentialValue: newOrder.total,
+        lastContact: 'Just now',
+        lastMessage: `Payment of ₦${newOrder.total.toLocaleString()} confirmed.`,
+        recommendedAction: 'Confirm dispatch timetable with courier and send tracking update via WhatsApp.',
+        dueDate: 'Tomorrow',
+        priority: 'medium',
+        status: 'pending',
+      });
+    } else {
+      this.addFollowUp({
+        customerId: newOrder.customerId,
+        customerName: cust ? cust.name : newOrder.customerName,
+        customerPhone: cust ? cust.phone : newOrder.customerPhone,
+        reason: `Awaiting payment confirmation for Order #${newOrder.orderNumber}`,
+        category: 'payment',
+        potentialValue: newOrder.total,
+        lastContact: 'Just now',
+        lastMessage: `Invoice generated for Order #${newOrder.orderNumber} (₦${newOrder.total.toLocaleString()})`,
+        recommendedAction: 'Send friendly payment reminder and verify Zenith bank transfer credit.',
+        dueDate: 'Today (within 2 hours)',
+        priority: 'high',
+        status: 'pending',
+      });
     }
 
     if (auth.currentUser) {
@@ -934,8 +1151,9 @@ class StorageService {
         orderUpdates.paymentStatus = paymentStatus;
 
         if (paymentStatus === 'paid') {
-          order.paymentDate = new Date().toISOString();
-          orderUpdates.paymentDate = order.paymentDate;
+          const nowIso = new Date().toISOString();
+          order.paymentDate = nowIso;
+          orderUpdates.paymentDate = nowIso;
 
           if (wasUnpaid) {
             const cust = this.customers.find((c) => c.id === order.customerId);
@@ -943,7 +1161,7 @@ class StorageService {
               cust.totalSpent += order.total;
               cust.orderCount += 1;
               cust.averageOrderValue = cust.orderCount > 0 ? Math.round(cust.totalSpent / cust.orderCount) : 0;
-              cust.lastPurchaseDate = new Date().toISOString().split('T')[0];
+              cust.lastPurchaseDate = nowIso.split('T')[0];
               custUpdate = {
                 totalSpent: cust.totalSpent,
                 orderCount: cust.orderCount,
@@ -955,6 +1173,30 @@ class StorageService {
             if (lead && lead.stage !== 'COMPLETED') {
               this.updateLeadStage(lead.id, 'PAID');
             }
+
+            // Mark any pending payment follow-ups for this customer as completed
+            const pendingPaymentFol = this.followUps.find(
+              (f) => f.customerId === order.customerId && f.category === 'payment' && f.status === 'pending'
+            );
+            if (pendingPaymentFol) {
+              this.updateFollowUpStatus(pendingPaymentFol.id, 'completed');
+            }
+
+            // Schedule post-purchase fulfillment follow-up
+            this.addFollowUp({
+              customerId: order.customerId,
+              customerName: cust ? cust.name : order.customerName,
+              customerPhone: cust ? cust.phone : order.customerPhone,
+              reason: `Delivery dispatch & order fulfillment for Order #${order.orderNumber}`,
+              category: 'fulfillment',
+              potentialValue: order.total,
+              lastContact: 'Just now',
+              lastMessage: `Payment of ₦${order.total.toLocaleString()} confirmed.`,
+              recommendedAction: 'Confirm dispatch timetable with courier and send tracking update via WhatsApp.',
+              dueDate: 'Tomorrow',
+              priority: 'medium',
+              status: 'pending',
+            });
           }
         }
       }
@@ -1092,13 +1334,21 @@ class StorageService {
     const activeFollowUps = this.followUps.filter((f) => f.status === 'pending');
     const recoverableRevenue = activeFollowUps.reduce((sum, f) => sum + f.potentialValue, 0);
 
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayPaidSum = paidOrders
+      .filter(
+        (o) =>
+          (o.paymentDate && o.paymentDate.startsWith(todayStr)) ||
+          (o.createdDate && o.createdDate.startsWith(todayStr))
+      )
+      .reduce((sum, o) => sum + o.total, 0);
+
     const isDefaultDemo = this.isDemoStore();
 
     if (!isDefaultDemo) {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const todayPaidSum = paidOrders
-        .filter((o) => o.createdDate && o.createdDate.startsWith(todayStr))
-        .reduce((sum, o) => sum + o.total, 0);
+      if (this.conversations.length > 0 && this.leads.length < this.conversations.length) {
+        this.ensureLeadsForConversationsSync();
+      }
 
       const totalLeadsCount = this.leads.length;
       // Explicit guard: zero denominator check for conversion rate
@@ -1129,14 +1379,14 @@ class StorageService {
         : 18.7;
 
     return {
-      revenueToday: 438500 + (livePaidSum > 600000 ? livePaidSum - 600000 : 0),
-      revenueThisMonth: 8420000 + (livePaidSum > 600000 ? livePaidSum - 600000 : 0),
+      revenueToday: 438500 + todayPaidSum,
+      revenueThisMonth: 8420000 + todayPaidSum,
       totalOrders: 342 + (this.orders.length - 10),
       newLeads: demoTotalLeads,
       conversionRate: demoConversionRate,
-      outstandingPayments: Math.max(420000, liveUnpaidSum),
+      outstandingPayments: Math.max(0, liveUnpaidSum),
       followUpsDue: activeFollowUps.length,
-      recoverableRevenue: Math.max(1240000, recoverableRevenue),
+      recoverableRevenue: Math.max(0, recoverableRevenue),
     };
   }
 
@@ -1388,6 +1638,51 @@ class StorageService {
       }
 
       // =========================================================================
+      // STEP 2b: CREATE OR UPDATE LEAD DOCUMENT IN FIRESTORE
+      // Target Path: /businesses/{businessId}/leads/{leadId}
+      // =========================================================================
+      let lead = this.leads.find(
+        (l) => l.customerId === customer.id || l.id === `lead_${customer.id}`
+      );
+      const leadId = lead ? lead.id : `lead_${customer.id}`;
+      const productInterest =
+        params.productInterest ||
+        (lead ? lead.productInterest : (params.text || 'General Inquiry'));
+      const potentialValue =
+        params.estimatedValue !== undefined
+          ? params.estimatedValue
+          : (lead ? lead.potentialValue : (conv.estimatedOrderValue || 0));
+      const leadStage = (params.leadStage || (lead ? lead.stage : 'NEW_LEAD')) as LeadStage;
+
+      if (!lead) {
+        lead = {
+          id: leadId,
+          businessId,
+          customerId: customer.id,
+          customerName: customer.name,
+          productInterest,
+          potentialValue,
+          stage: leadStage,
+          daysInStage: 0,
+          lastInteraction: 'Just now',
+          notes: `Inbound WhatsApp lead from ${customer.phone}`,
+        };
+        this.leads.unshift(lead);
+      } else {
+        const leadUpdates: Partial<Lead> = {
+          customerName: customer.name,
+          lastInteraction: 'Just now',
+        };
+        if (params.productInterest && (!lead.productInterest || lead.productInterest === 'General Inquiry')) {
+          leadUpdates.productInterest = params.productInterest;
+        }
+        if (params.estimatedValue && (!lead.potentialValue || lead.potentialValue === 0)) {
+          leadUpdates.potentialValue = params.estimatedValue;
+        }
+        Object.assign(lead, leadUpdates);
+      }
+
+      // =========================================================================
       // STEP 3: CREATE MESSAGE DOCUMENT IN FIRESTORE
       // Target Path: /businesses/{businessId}/conversations/{conversationId}/messages/{messageId}
       // =========================================================================
@@ -1426,7 +1721,12 @@ class StorageService {
         }
       }
 
-      this.messages.push(newMessage);
+      const existingInboundMsgIdx = this.messages.findIndex((m) => m.id === newMessage.id);
+      if (existingInboundMsgIdx >= 0) {
+        this.messages[existingInboundMsgIdx] = newMessage;
+      } else {
+        this.messages.push(newMessage);
+      }
 
       // =========================================================================
       // STEP 4: RECORD NOTIFICATION & BROADCAST
@@ -1442,6 +1742,7 @@ class StorageService {
         link: 'inbox',
       });
 
+      this.ensureLeadsForConversationsSync(businessId);
       this.notify();
       return { customer, conversation: conv, message: newMessage };
     } finally {
@@ -1525,6 +1826,38 @@ class StorageService {
   }
 
   public getData() {
+    if (!this.isDemoStore() && this.conversations.length > 0 && this.leads.length < this.conversations.length) {
+      this.ensureLeadsForConversationsSync();
+    }
+
+    // Strictly deduplicate messages by id
+    const uniqueMessages: Message[] = [];
+    const seenMsgIds = new Set<string>();
+    for (const m of this.messages) {
+      if (m?.id) {
+        if (!seenMsgIds.has(m.id)) {
+          seenMsgIds.add(m.id);
+          uniqueMessages.push(m);
+        }
+      } else if (m) {
+        uniqueMessages.push(m);
+      }
+    }
+
+    // Strictly deduplicate conversations by id
+    const uniqueConversations: Conversation[] = [];
+    const seenConvIds = new Set<string>();
+    for (const c of this.conversations) {
+      if (c?.id) {
+        if (!seenConvIds.has(c.id)) {
+          seenConvIds.add(c.id);
+          uniqueConversations.push(c);
+        }
+      } else if (c) {
+        uniqueConversations.push(c);
+      }
+    }
+
     return {
       user: this.user,
       business: this.business,
@@ -1532,8 +1865,8 @@ class StorageService {
       whatsAppConfig: this.getWhatsAppConfig(),
       products: [...this.products],
       customers: [...this.customers],
-      conversations: [...this.conversations],
-      messages: [...this.messages],
+      conversations: uniqueConversations,
+      messages: uniqueMessages,
       leads: [...this.leads],
       orders: [...this.orders],
       followUps: [...this.followUps],
@@ -1542,10 +1875,88 @@ class StorageService {
     };
   }
 
-  public simulatePayment(orderId?: string): { order: Order; customer: Customer } {
+  public simulatePayment(orderId?: string, customerId?: string): { order: Order; customer: Customer } {
     let targetOrder = orderId
       ? this.orders.find((o) => o.id === orderId)
-      : this.orders.find((o) => o.paymentStatus === 'awaiting_payment');
+      : customerId
+      ? this.orders.find((o) => o.customerId === customerId && o.paymentStatus !== 'paid')
+      : this.orders.find((o) => o.paymentStatus === 'awaiting_payment' || o.paymentStatus === 'pending');
+
+    // If no unpaid orders exist, pick an active pipeline lead and create an order for them
+    if (!targetOrder) {
+      const activeLead = customerId
+        ? this.leads.find((l) => l.customerId === customerId)
+        : this.leads.find(
+            (l) =>
+              l.stage === 'AWAITING_PAYMENT' ||
+              l.stage === 'PRODUCT_SELECTED' ||
+              l.stage === 'INTERESTED' ||
+              l.stage === 'NEW_LEAD'
+          );
+      if (activeLead) {
+        const cust = this.customers.find((c) => c.id === activeLead.customerId) || this.customers[0];
+        const matchedProd = this.products.find(
+          (p) =>
+            activeLead.productInterest &&
+            (p.name.toLowerCase().includes(activeLead.productInterest.toLowerCase()) ||
+             activeLead.productInterest.toLowerCase().includes(p.name.toLowerCase()))
+        ) || this.products[0];
+        const val = activeLead.potentialValue > 0 ? activeLead.potentialValue : (matchedProd ? matchedProd.price : 45000);
+        targetOrder = this.addOrder({
+          customerId: cust.id,
+          customerName: cust.name,
+          customerPhone: cust.phone,
+          items: [
+            {
+              id: `item_${Date.now()}`,
+              productId: matchedProd ? matchedProd.id : 'prod_01',
+              productName: activeLead.productInterest || (matchedProd ? matchedProd.name : 'Fashion Item'),
+              quantity: 1,
+              price: val,
+              size: 'Standard',
+              colour: 'Standard',
+            },
+          ],
+          subtotal: val,
+          deliveryFee: 0,
+          discount: 0,
+          total: val,
+          paymentStatus: 'awaiting_payment',
+          orderStatus: 'pending',
+          deliveryAddress: cust.location || 'Lagos, Nigeria',
+        });
+      }
+    }
+
+    if (!targetOrder && customerId) {
+      const cust = this.customers.find((c) => c.id === customerId);
+      if (cust) {
+        const val = 45000;
+        targetOrder = this.addOrder({
+          customerId: cust.id,
+          customerName: cust.name,
+          customerPhone: cust.phone,
+          items: [
+            {
+              id: `item_${Date.now()}`,
+              productId: 'prod_01',
+              productName: 'Fashion Order',
+              quantity: 1,
+              price: val,
+              size: 'Standard',
+              colour: 'Standard',
+            },
+          ],
+          subtotal: val,
+          deliveryFee: 0,
+          discount: 0,
+          total: val,
+          paymentStatus: 'awaiting_payment',
+          orderStatus: 'pending',
+          deliveryAddress: cust.location || 'Lagos, Nigeria',
+        });
+      }
+    }
 
     if (!targetOrder) {
       targetOrder = this.orders.find((o) => o.paymentStatus !== 'paid');
@@ -1621,8 +2032,8 @@ export class StorageServiceFacade {
     return storage.getListenerCount();
   }
 
-  static isDemoStore(): boolean {
-    return storage.isDemoStore();
+  static isDemoStore(businessId?: string): boolean {
+    return storage.isDemoStore(businessId);
   }
 
   static isConnectingContext(): boolean {
@@ -1655,8 +2066,8 @@ export class StorageServiceFacade {
     return storage.receiveInboundMessage(params);
   }
 
-  static simulatePayment(orderId?: string) {
-    return storage.simulatePayment(orderId);
+  static simulatePayment(orderId?: string, customerId?: string) {
+    return storage.simulatePayment(orderId, customerId);
   }
 
   static simulateLeadAdvance() {
@@ -1668,12 +2079,17 @@ export class StorageServiceFacade {
   }
 
   static updateCustomerLeadStage(customerId: string, stage: LeadStage) {
-    const lead = storage.getLeads().find((l) => l.customerId === customerId);
+    const lead = storage.getLeads().find((l) => l.customerId === customerId || l.id === `lead_${customerId}`);
     if (lead) {
       storage.updateLeadStage(lead.id, stage);
     } else {
       storage.updateCustomer(customerId, { leadStage: stage });
+      storage.createOrUpdateLeadForCustomer(customerId, stage);
     }
+  }
+
+  static createOrUpdateLeadForCustomer(customerId: string, stage: LeadStage = 'NEW_LEAD') {
+    return storage.createOrUpdateLeadForCustomer(customerId, stage);
   }
 
   static createOrder(orderData: Omit<Order, 'id' | 'orderNumber' | 'businessId' | 'createdDate'>) {

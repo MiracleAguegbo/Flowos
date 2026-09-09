@@ -90,6 +90,24 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
     }
   };
 
+  const getCategoryBadge = (category: FollowUpCategory) => {
+    switch (category) {
+      case 'payment':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">Payment</span>;
+      case 'fulfillment':
+      case 'dispatch':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">Fulfillment / Dispatch</span>;
+      case 'no_response':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">No Response</span>;
+      case 'abandoned_purchase':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">Stalled Cart</span>;
+      case 'repeat_customer':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">VIP / Repeat</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-50 text-slate-700 border border-slate-200">Follow-up</span>;
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 space-y-6">
       {/* Top Banner: Recoverable Revenue */}
@@ -139,6 +157,16 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
           }`}
         >
           Awaiting Payment
+        </button>
+        <button
+          onClick={() => setActiveCategory('fulfillment')}
+          className={`px-3 py-1.5 rounded-lg font-semibold transition-colors ${
+            activeCategory === 'fulfillment'
+              ? 'bg-blue-600 text-white shadow-2xs'
+              : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
+          }`}
+        >
+          Fulfillment / Dispatch
         </button>
         <button
           onClick={() => setActiveCategory('no_response')}
@@ -202,12 +230,17 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
                     </h4>
                     <p className="text-xs text-slate-500 mt-0.5">{item.customerPhone}</p>
                   </div>
-                  {getPriorityBadge(item.priority)}
+                  <div className="flex flex-col items-end gap-1">
+                    {getCategoryBadge(item.category)}
+                    {getPriorityBadge(item.priority)}
+                  </div>
                 </div>
 
                 <div className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between text-slate-600">
-                    <span className="font-medium">Potential Sale:</span>
+                    <span className="font-medium">
+                      {item.category === 'fulfillment' || item.category === 'dispatch' ? 'Order Value:' : 'Potential Sale:'}
+                    </span>
                     <strong className="text-emerald-700 font-bold">
                       ₦{item.potentialValue.toLocaleString()}
                     </strong>
@@ -330,6 +363,7 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
                 className="w-full p-2.5 border border-slate-200 rounded-lg text-xs bg-white"
               >
                 <option value="payment">Awaiting Payment</option>
+                <option value="fulfillment">Fulfillment / Dispatch</option>
                 <option value="no_response">No Response</option>
                 <option value="abandoned_purchase">Stalled Purchase</option>
                 <option value="repeat_customer">Repeat Customer</option>

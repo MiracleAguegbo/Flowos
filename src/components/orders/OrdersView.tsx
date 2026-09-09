@@ -34,6 +34,9 @@ interface OrdersViewProps {
   onAddOrder: (order: Omit<Order, 'id' | 'orderNumber' | 'businessId' | 'createdDate'>) => void;
   onUpdateStatus: (orderId: string, paymentStatus?: PaymentStatus, orderStatus?: OrderStatus) => void;
   onOpenChat: (customerId: string) => void;
+  initialCustomerId?: string;
+  autoOpenCreateModal?: boolean;
+  onCloseCreateModal?: () => void;
 }
 
 export const OrdersView: React.FC<OrdersViewProps> = ({
@@ -45,6 +48,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onAddOrder,
   onUpdateStatus,
   onOpenChat,
+  initialCustomerId,
+  autoOpenCreateModal,
+  onCloseCreateModal,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -53,13 +59,26 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [copiedReceipt, setCopiedReceipt] = useState(false);
 
   // New order form state
-  const [selectedCustomerId, setSelectedCustomerId] = useState(customers[0]?.id || '');
+  const [selectedCustomerId, setSelectedCustomerId] = useState(initialCustomerId || customers[0]?.id || '');
   const [selectedProductId, setSelectedProductId] = useState(products[0]?.id || '');
   const [selectedSize, setSelectedSize] = useState('UK 12');
   const [quantity, setQuantity] = useState(1);
   const [deliveryFee, setDeliveryFee] = useState(3500);
   const [deliveryAddress, setDeliveryAddress] = useState('Lekki Phase 1, Lagos');
   const [initialPaymentStatus, setInitialPaymentStatus] = useState<PaymentStatus>('awaiting_payment');
+
+  React.useEffect(() => {
+    if (initialCustomerId) {
+      setSelectedCustomerId(initialCustomerId);
+      const cust = customers.find((c) => c.id === initialCustomerId);
+      if (cust?.location) {
+        setDeliveryAddress(cust.location);
+      }
+    }
+    if (autoOpenCreateModal) {
+      setShowCreateModal(true);
+    }
+  }, [initialCustomerId, autoOpenCreateModal, customers]);
 
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
@@ -119,6 +138,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     });
 
     setShowCreateModal(false);
+    onCloseCreateModal?.();
   };
 
   const generateReceiptText = (order: Order) => {
@@ -351,7 +371,10 @@ Thank you for choosing ${bizName}! ✨`;
       {/* Create Order Modal */}
       <Modal
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
+        onClose={() => {
+          setShowCreateModal(false);
+          onCloseCreateModal?.();
+        }}
         title="Create New Customer Order"
         subtitle="Quickly log a sale negotiated via WhatsApp."
       >

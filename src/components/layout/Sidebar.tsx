@@ -13,7 +13,8 @@ import {
   LogOut,
   X,
 } from 'lucide-react';
-import { Business, User } from '../../types';
+import { Business, User, WhatsAppIntegrationConfig } from '../../types';
+import { StorageService } from '../../services/storage';
 
 interface SidebarProps {
   activeView?: string;
@@ -22,6 +23,7 @@ interface SidebarProps {
   setActiveTab?: (tab: string) => void;
   business?: Business;
   user?: User;
+  whatsAppConfig?: WhatsAppIntegrationConfig;
   unreadConversationsCount?: number;
   unreadCount?: number;
   followUpsDueCount?: number;
@@ -40,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setActiveTab,
   business,
   user,
+  whatsAppConfig,
   unreadConversationsCount,
   unreadCount,
   followUpsDueCount,
@@ -206,15 +209,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="p-3 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-[#111827] truncate">
-                {business?.name || 'Luma Fashion'}
+                {business?.name || (StorageService.isDemoStore() ? 'Luma Fashion' : 'My Store')}
               </span>
-              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60">
-                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                WA Connected
-              </span>
+              {(() => {
+                const isDemo = StorageService.isDemoStore();
+                const isConnected = whatsAppConfig?.status === 'connected';
+                if (isConnected) {
+                  return (
+                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/60">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                      WA Live
+                    </span>
+                  );
+                }
+                if (isDemo) {
+                  return (
+                    <span className="flex items-center gap-1.5 text-[10px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60">
+                      <span className="w-1.5 h-1.5 bg-[#2563EB] rounded-full animate-pulse" />
+                      WA Demo
+                    </span>
+                  );
+                }
+                return (
+                  <span className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60">
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                    WA Pending
+                  </span>
+                );
+              })()}
             </div>
             <p className="text-[11px] text-[#9CA3AF] mt-1 font-mono">
-              {business?.phone || '+234 814 555 0192'}
+              {business?.phone || (StorageService.isDemoStore() ? '+234 814 555 0192' : 'Pending Phase 3')}
             </p>
           </div>
         </div>
@@ -222,13 +247,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* User Account / Profile Footer */}
         <div className="mt-auto p-6 border-t border-[#E5E7EB]">
           {(() => {
-            const ownerDisplayName = business?.ownerName || user?.displayName || 'Amaka M.';
+            const ownerDisplayName = business?.ownerName || user?.displayName || (StorageService.isDemoStore() ? 'Amaka M.' : 'Store Owner');
             const initials = ownerDisplayName
               .split(' ')
               .map((n) => n[0])
               .join('')
               .slice(0, 2)
-              .toUpperCase() || 'AM';
+              .toUpperCase() || 'SO';
 
             return (
               <div className="flex items-center justify-between">
@@ -241,7 +266,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       {ownerDisplayName}
                     </p>
                     <p className="text-xs text-[#9CA3AF] truncate">
-                      {business?.name || 'Luma Fashion'}
+                      {business?.name || (StorageService.isDemoStore() ? 'Luma Fashion' : 'My Store')}
                     </p>
                   </div>
                 </div>

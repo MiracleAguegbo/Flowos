@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { StorageService } from './services/storage';
 import { AuthService } from './services/authService';
 import { handleAuthStateChange, handleMerchantLogin } from './services/appAuthFlow';
@@ -56,6 +56,8 @@ export default function App() {
     data.conversations[0]?.id || ''
   );
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [orderModalCustomerId, setOrderModalCustomerId] = useState<string | undefined>(undefined);
+  const [autoOpenOrderModal, setAutoOpenOrderModal] = useState<boolean>(false);
 
   const [isSettingUp, setIsSettingUp] = useState(false);
   const setupCancelledRef = useRef(false);
@@ -116,8 +118,8 @@ export default function App() {
     );
   };
 
-  const handleSimulatePayment = () => {
-    const { order, customer } = StorageService.simulatePayment();
+  const handleSimulatePayment = (orderId?: string, customerId?: string) => {
+    const { order, customer } = StorageService.simulatePayment(orderId, customerId);
     addToast(
       'success',
       `₦ Payment Received!`,
@@ -235,9 +237,23 @@ export default function App() {
   const activeCustomer = activeConversation
     ? data.customers.find((c) => c.id === activeConversation.customerId)
     : undefined;
-  const activeMessages = activeConversation
-    ? data.messages.filter((m) => m.conversationId === activeConversation.id)
-    : [];
+  const activeMessages = useMemo(() => {
+    if (!activeConversation) return [];
+    const convMsgs = data.messages.filter((m) => m.conversationId === activeConversation.id);
+    const seen = new Set<string>();
+    const unique: typeof data.messages = [];
+    for (const m of convMsgs) {
+      if (m?.id) {
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          unique.push(m);
+        }
+      } else if (m) {
+        unique.push(m);
+      }
+    }
+    return unique;
+  }, [data.messages, activeConversation]);
 
   // ==========================================
   // LOADING / WORKSPACE SETUP STATE
@@ -475,6 +491,7 @@ export default function App() {
           setIsMobileOpen={setIsMobileOpen}
           business={data.business}
           user={data.user}
+          whatsAppConfig={data.whatsAppConfig}
           onLogout={async () => {
             try {
               await AuthService.signOut();
@@ -541,6 +558,8 @@ export default function App() {
               onSendMessage={handleSendMessage}
               onUpdateLeadStage={handleUpdateLeadStage}
               onCreateOrderForCustomer={(cust) => {
+                setOrderModalCustomerId(cust.id);
+                setAutoOpenOrderModal(true);
                 setActiveView('orders');
               }}
               onNavigateToSettings={() => setActiveView('settings')}
@@ -561,6 +580,14 @@ export default function App() {
                 }
               }}
               onOpenChat={handleOpenChat}
+              onCreateOrder={(lead) => {
+                setOrderModalCustomerId(lead.customerId);
+                setAutoOpenOrderModal(true);
+                setActiveView('orders');
+              }}
+              onSimulatePay={(lead) => {
+                handleSimulatePayment(undefined, lead.customerId);
+              }}
             />
           )}
 
@@ -583,6 +610,9 @@ export default function App() {
               onAddOrder={handleAddOrder}
               onUpdateStatus={handleUpdateOrderStatus}
               onOpenChat={handleOpenChat}
+              initialCustomerId={orderModalCustomerId}
+              autoOpenCreateModal={autoOpenOrderModal}
+              onCloseCreateModal={() => setAutoOpenOrderModal(false)}
             />
           )}
 

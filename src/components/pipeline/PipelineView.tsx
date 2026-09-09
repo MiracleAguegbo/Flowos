@@ -14,6 +14,7 @@ import {
   TrendingUp,
   AlertCircle,
   Filter,
+  ShoppingBag,
 } from 'lucide-react';
 import { StageBadge } from '../common/Badge';
 
@@ -22,6 +23,8 @@ interface PipelineViewProps {
   customers: Customer[];
   onUpdateStage: (leadId: string, stage: LeadStage) => void;
   onOpenChat: (customerId: string) => void;
+  onCreateOrder?: (lead: Lead) => void;
+  onSimulatePay?: (lead: Lead) => void;
 }
 
 const STAGES: { id: LeadStage; title: string; color: string; border: string; bg: string }[] = [
@@ -39,6 +42,8 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   customers,
   onUpdateStage,
   onOpenChat,
+  onCreateOrder,
+  onSimulatePay,
 }) => {
   const [filterQuery, setFilterQuery] = useState('');
 
@@ -191,13 +196,34 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
 
                           {/* Quick Card Controls */}
                           <div className="pt-2 border-t border-[#F3F4F6] flex items-center justify-between">
-                            <button
-                              onClick={() => onOpenChat(lead.customerId)}
-                              className="text-xs text-[#2563EB] font-semibold hover:underline flex items-center gap-1"
-                            >
-                              <MessageSquare className="w-3 h-3" />
-                              <span>Chat</span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => onOpenChat(lead.customerId)}
+                                className="text-xs text-[#2563EB] font-semibold hover:underline flex items-center gap-1"
+                              >
+                                <MessageSquare className="w-3 h-3" />
+                                <span>Chat</span>
+                              </button>
+                              {onCreateOrder && lead.stage !== 'COMPLETED' && lead.stage !== 'LOST' && (
+                                <button
+                                  onClick={() => onCreateOrder(lead)}
+                                  className="text-xs text-emerald-600 font-semibold hover:underline flex items-center gap-1"
+                                  title="Create Order"
+                                >
+                                  <ShoppingBag className="w-3 h-3" />
+                                  <span>Order</span>
+                                </button>
+                              )}
+                              {onSimulatePay && lead.stage !== 'COMPLETED' && lead.stage !== 'LOST' && lead.stage !== 'PAID' && (
+                                <button
+                                  onClick={() => onSimulatePay(lead)}
+                                  className="text-xs text-emerald-700 font-semibold hover:bg-emerald-100 flex items-center gap-0.5 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 transition-colors"
+                                  title="Simulate ₦ Pay for this lead"
+                                >
+                                  <span>₦ Pay</span>
+                                </button>
+                              )}
+                            </div>
 
                             <div className="flex items-center gap-1">
                               {lead.stage !== 'NEW_LEAD' && (

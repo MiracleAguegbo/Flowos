@@ -16,6 +16,7 @@ import {
   Info,
 } from 'lucide-react';
 import { WhatsAppIntegrationConfig, Business } from '../../types';
+import { StorageService } from '../../services/storage';
 
 interface WhatsAppIntegrationSettingsProps {
   config: WhatsAppIntegrationConfig;
@@ -35,7 +36,7 @@ export const WhatsAppIntegrationSettings: React.FC<WhatsAppIntegrationSettingsPr
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [currentOnboardingStep, setCurrentOnboardingStep] = useState(1);
 
-  const isDemo = config.isDemoMode || config.status === 'demo_connected';
+  const isDemo = StorageService.isDemoStore();
   const isConnected = config.status === 'connected';
 
   const handleToggleDemoMode = (enable: boolean) => {
@@ -96,6 +97,30 @@ export const WhatsAppIntegrationSettings: React.FC<WhatsAppIntegrationSettingsPr
         </div>
       )}
 
+      {/* Pre-Release Notice for Real Merchant Accounts awaiting Phase 3 */}
+      {!isDemo && !isConnected && (
+        <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-xl flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600 shrink-0 mt-0.5">
+              <Info className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-amber-900">
+                Awaiting WhatsApp Connection — Phase 3 Cloud API
+              </h4>
+              <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                Direct Meta WhatsApp Cloud API credentials and webhooks will connect your official business number in Phase 3. In the meantime, you can test inbound orders and AI reply flows using the workspace simulation controls.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-900">
+              Awaiting Connection
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Main Connection Status Card */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 sm:p-6 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[#E5E7EB]">
@@ -113,16 +138,16 @@ export const WhatsAppIntegrationSettings: React.FC<WhatsAppIntegrationSettingsPr
                     Connected
                   </span>
                 )}
-                {config.status === 'demo_connected' && (
+                {isDemo && config.status === 'demo_connected' && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-[#2563EB] border border-blue-200">
                     <span className="w-1.5 h-1.5 bg-[#2563EB] rounded-full animate-pulse" />
                     Demo Connected
                   </span>
                 )}
-                {config.status === 'not_connected' && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#F3F4F6] text-[#4B5563] border border-[#E5E7EB]">
-                    <span className="w-1.5 h-1.5 bg-[#9CA3AF] rounded-full" />
-                    Not Connected
+                {(!isDemo || config.status === 'not_connected') && config.status !== 'connected' && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                    Awaiting Connection
                   </span>
                 )}
               </div>
@@ -172,10 +197,22 @@ export const WhatsAppIntegrationSettings: React.FC<WhatsAppIntegrationSettingsPr
               Phone Number
             </span>
             <span className="text-sm font-semibold text-[#111827] mt-1 block">
-              {config.phoneNumberDisplay || '+234 814 555 0192'}
+              {config.phoneNumberDisplay || business.phone || (isDemo ? '+234 814 555 0192' : 'Pending Phase 3')}
             </span>
-            <span className="text-[10px] text-green-600 font-medium mt-0.5 inline-block">
-              ✓ Verified Meta Number
+            <span
+              className={`text-[10px] font-medium mt-0.5 inline-block ${
+                isConnected
+                  ? 'text-green-600'
+                  : isDemo
+                  ? 'text-blue-600'
+                  : 'text-amber-600'
+              }`}
+            >
+              {isConnected
+                ? '✓ Verified Meta Number'
+                : isDemo
+                ? '✓ Verified Meta Number (Simulated)'
+                : '⏳ Awaiting Phase 3 Cloud Setup'}
             </span>
           </div>
 
@@ -184,10 +221,10 @@ export const WhatsAppIntegrationSettings: React.FC<WhatsAppIntegrationSettingsPr
               Business Account
             </span>
             <span className="text-sm font-semibold text-[#111827] mt-1 block truncate">
-              {config.businessAccountName || business.name || 'LUMA FASHION'}
+              {config.businessAccountName || business.name || (isDemo ? 'LUMA FASHION' : 'Store Account')}
             </span>
             <span className="text-[10px] text-[#6B7280] font-mono mt-0.5 inline-block">
-              {config.businessAccountId || 'WABA_LUMA_902188'}
+              {config.businessAccountId || (isDemo ? 'WABA_LUMA_902188' : `WABA_${business.id?.toUpperCase().slice(0, 10) || 'PENDING'}`)}
             </span>
           </div>
 
@@ -217,40 +254,52 @@ export const WhatsAppIntegrationSettings: React.FC<WhatsAppIntegrationSettingsPr
           </div>
         </div>
 
-        {/* Demo Mode Controller Card */}
+        {/* Testing & Simulation Controller Card */}
         <div className="pt-4 border-t border-[#E5E7EB] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-[#111827]">Demo Mode</span>
+              <span className="text-xs font-bold text-[#111827]">
+                {isDemo ? 'Demo Mode' : 'Inbound Testing & Simulation'}
+              </span>
               <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#E5E7EB] text-[#4B5563]">
-                PROTOTYPE ENVIRONMENT
+                {isDemo ? 'PROTOTYPE ENVIRONMENT' : 'PRE-RELEASE WORKSPACE'}
               </span>
             </div>
             <p className="text-xs text-[#6B7280] max-w-xl">
-              Enable Demo Mode to simulate incoming WhatsApp customer inquiries and test your pipeline, AI replies, and order workflows safely.
+              {isDemo
+                ? 'Enable Demo Mode to simulate incoming WhatsApp customer inquiries and test your pipeline, AI replies, and order workflows safely.'
+                : 'Allows simulating test customer chats, order creation, and bank transfer payment verifications in your live store while awaiting Phase 3 WhatsApp credentials.'}
             </p>
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              id="toggle-demo-mode-btn"
-              onClick={() => handleToggleDemoMode(!isDemo)}
-              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
-                isDemo ? 'bg-[#2563EB]' : 'bg-[#D1D5DB]'
-              }`}
-              role="switch"
-              aria-checked={isDemo}
-            >
-              <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
-                  isDemo ? 'translate-x-5' : 'translate-x-0'
-                }`}
-              />
-            </button>
-            <span className="text-xs font-semibold text-[#111827]">
-              {isDemo ? 'Demo Enabled' : 'Disabled'}
-            </span>
+            {isDemo ? (
+              <>
+                <button
+                  type="button"
+                  id="toggle-demo-mode-btn"
+                  onClick={() => handleToggleDemoMode(!config.isDemoMode)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                    config.isDemoMode ? 'bg-[#2563EB]' : 'bg-[#D1D5DB]'
+                  }`}
+                  role="switch"
+                  aria-checked={config.isDemoMode}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      config.isDemoMode ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+                <span className="text-xs font-semibold text-[#111827]">
+                  {config.isDemoMode ? 'Demo Enabled' : 'Disabled'}
+                </span>
+              </>
+            ) : (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Active for Testing
+              </span>
+            )}
           </div>
         </div>
 

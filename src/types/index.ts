@@ -20,6 +20,8 @@ export type OrderStatus =
 
 export type FollowUpCategory = 
   | 'payment'
+  | 'fulfillment'
+  | 'dispatch'
   | 'no_response'
   | 'abandoned_purchase'
   | 'repeat_customer'

@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Business, WhatsAppIntegrationConfig } from '../../types';
+import { StorageService } from '../../services/storage';
 
 interface HeaderProps {
   business?: Business;
@@ -60,14 +61,36 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="text-xs font-bold uppercase tracking-widest text-[#9CA3AF] hidden sm:inline">
             Status:
           </span>
-          <span className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200/60">
-            <span className="w-1.5 h-1.5 bg-[#2563EB] rounded-full animate-pulse"></span>
-            {whatsAppConfig?.status === 'connected'
-              ? 'WhatsApp Connected'
-              : whatsAppConfig?.status === 'demo_connected'
-              ? 'WhatsApp Business • Demo Connected'
-              : 'WhatsApp: Ready to Connect'}
-          </span>
+          {(() => {
+            const isDemo = StorageService.isDemoStore();
+            const isConnected = whatsAppConfig?.status === 'connected';
+            const isDemoConnected = isDemo && whatsAppConfig?.status === 'demo_connected';
+
+            if (isConnected) {
+              return (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200/60">
+                  <span className="w-1.5 h-1.5 bg-emerald-600 rounded-full" />
+                  WhatsApp Connected
+                </span>
+              );
+            }
+
+            if (isDemoConnected) {
+              return (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200/60">
+                  <span className="w-1.5 h-1.5 bg-[#2563EB] rounded-full animate-pulse" />
+                  WhatsApp Business • Demo Connected
+                </span>
+              );
+            }
+
+            return (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-amber-800 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200/60">
+                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                Awaiting WhatsApp Connection
+              </span>
+            );
+          })()}
         </div>
 
         <div className="hidden md:flex items-center text-xs text-[#9CA3AF] ml-2">

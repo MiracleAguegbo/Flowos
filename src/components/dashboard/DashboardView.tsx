@@ -43,10 +43,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const urgentFollowUps = followUps.filter((f) => f.status === 'pending').slice(0, 4);
   const currency = business?.currency || '₦';
-  const isDemo =
-    business?.id === 'biz_luma_main' ||
-    business?.id === 'biz_luma_01' ||
-    StorageService.isDemoStore();
+  const isDemo = StorageService.isDemoStore(business?.id);
 
   // Sales funnel counts
   const newLeadsCount = leads.filter((l) => l.stage === 'NEW_LEAD').length || (isDemo ? 87 : 0);
@@ -266,9 +263,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       .join('')
                       .slice(0, 2)
                       .toUpperCase();
+                    const lead = leads.find((l) => l.customerId === item.customerId);
+                    const isFulfillment =
+                      item.category === 'fulfillment' ||
+                      item.category === 'dispatch' ||
+                      item.reason.toLowerCase().includes('fulfillment') ||
+                      item.reason.toLowerCase().includes('dispatch');
                     const isPendingPayment =
+                      item.category === 'payment' ||
                       item.reason.toLowerCase().includes('payment') ||
                       item.reason.toLowerCase().includes('account');
+                    const displayValue =
+                      item.potentialValue > 0
+                        ? item.potentialValue
+                        : lead?.potentialValue && lead.potentialValue > 0
+                        ? lead.potentialValue
+                        : 0;
 
                     return (
                       <tr key={item.id} className="hover:bg-[#F9FAFB] transition-colors">
@@ -286,10 +296,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           </div>
                         </td>
                         <td className="py-3.5 font-bold text-[#111827] text-xs">
-                          ₦{item.potentialValue.toLocaleString()}
+                          ₦{displayValue.toLocaleString()}
                         </td>
                         <td className="py-3.5">
-                          {isPendingPayment ? (
+                          {lead ? (
+                            <StageBadge stage={lead.stage} size="sm" />
+                          ) : isFulfillment ? (
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px] font-bold border border-blue-200/60">
+                              FULFILLMENT
+                            </span>
+                          ) : isPendingPayment ? (
                             <span className="px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-200/60">
                               PENDING PAYMENT
                             </span>

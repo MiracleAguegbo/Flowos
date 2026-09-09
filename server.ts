@@ -10,6 +10,11 @@ const PORT = 3000;
 
 app.use(express.json());
 
+// Prevent 404 for favicon requests
+app.get("/favicon.ico", (_req, res) => {
+  res.status(204).end();
+});
+
 // Lazy-safe Gemini initialization
 let aiClient: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI | null {
@@ -95,10 +100,14 @@ app.post("/api/ai/reply-suggestions", async (req, res) => {
     const brandVoice =
       knowledgeBase?.brandVoice || "Warm, polite, helpful, and professional.";
 
-    // Fallback if Gemini key is not configured or fails
+    // Fallback if Gemini key is not configured
     if (!ai) {
+      const fallback = getFallbackReply(actionType, message, customer, products, business, knowledgeBase);
+      const stageInfo = detectStageFromMessageAndReply(message, fallback, customer?.leadStage);
       return res.json({
-        suggestion: getFallbackReply(actionType, message, customer, products, business, knowledgeBase),
+        suggestion: fallback,
+        suggestedStage: stageInfo.suggestedStage,
+        intent: stageInfo.intent,
         confidence: "medium",
         source: "local-rules",
       });
@@ -141,7 +150,7 @@ RULES:
     const userPrompt = `
 Customer Name: ${customer?.name || "Customer"}
 Customer Location: ${customer?.location || "Not specified"}
-Customer Lead Stage: ${customer?.leadStage || "NEW_LEAD"}
+Customer Current Lead Stage: ${customer?.leadStage || "NEW_LEAD"}
 
 Recent conversation snippet:
 ${history
@@ -151,20 +160,70 @@ ${history
 
 Latest incoming message: "${message || ""}"
 
-Instruction: Write a single WhatsApp response suitable for this customer based on action "${actionType}". Return ONLY the message text without quotes.`;
+Instruction:
+1. Write a single WhatsApp response suitable for this customer based on action "${actionType}".
+2. Detect the customer's sales stage and intent based on the conversation and your proposed response:
+   - "AWAITING_PAYMENT": If the conversation signals purchase intent (customer asking for account/bank details, how to pay, invoice, sending transfer confirmation, or ready to purchase).
+   - "PRODUCT_SELECTED": If the customer has selected or confirmed a specific item, size, color, or reservation.
+   - "INTERESTED": If the customer asks about product availability, prices, delivery, catalog, or expresses interest.
+   - "NEW_LEAD": If it is an initial greeting or general inquiry without specific product interest.
 
-    const response = await generateWithGemini(ai, {
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.7,
-      },
-    });
+Return ONLY a valid JSON object matching this schema:
+{
+  "suggestion": "string containing the WhatsApp reply text",
+  "suggestedStage": "NEW_LEAD" | "INTERESTED" | "PRODUCT_SELECTED" | "AWAITING_PAYMENT",
+  "intent": "interest" | "purchase" | "general"
+}`;
 
-    const replyText = response.text ? response.text.trim() : "";
+    let replyText = "";
+    let suggestedStage = "NEW_LEAD";
+    let intent = "general";
+
+    try {
+      const response = await generateWithGemini(ai, {
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.7,
+          responseMimeType: "application/json",
+        },
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      replyText = parsed.suggestion || "";
+      suggestedStage = parsed.suggestedStage || "NEW_LEAD";
+      intent = parsed.intent || "general";
+    } catch {
+      // If JSON parsing or model generation fails, attempt standard text generation
+      try {
+        const fallbackAi = await generateWithGemini(ai, {
+          contents: `Write a single WhatsApp response suitable for this customer based on action "${actionType}": "${message}". Customer: ${customer?.name || "Customer"}. Return ONLY the reply text.`,
+          config: {
+            systemInstruction: systemPrompt,
+            temperature: 0.7,
+          },
+        });
+        replyText = fallbackAi.text ? fallbackAi.text.trim() : "";
+      } catch {
+        replyText = "";
+      }
+    }
+
+    if (!replyText) {
+      replyText = getFallbackReply(actionType, message, customer, products, business, knowledgeBase);
+    }
+
+    // Reinforce / cross-validate stage detection using our deterministic intent engine
+    const detected = detectStageFromMessageAndReply(message, replyText, customer?.leadStage);
+    if (detected.suggestedStage !== "NEW_LEAD" && (suggestedStage === "NEW_LEAD" || detected.intent === "purchase")) {
+      suggestedStage = detected.suggestedStage;
+      intent = detected.intent;
+    }
 
     res.json({
-      suggestion: replyText || getFallbackReply(actionType, message, customer, products, business, knowledgeBase),
+      suggestion: replyText,
+      suggestedStage,
+      intent,
       confidence: "high",
       source: "gemini",
     });
@@ -179,8 +238,11 @@ Instruction: Write a single WhatsApp response suitable for this customer based o
       req.body.business,
       req.body.knowledgeBase
     );
+    const stageInfo = detectStageFromMessageAndReply(req.body.message, fallback, req.body.customer?.leadStage);
     res.json({
       suggestion: fallback,
+      suggestedStage: stageInfo.suggestedStage,
+      intent: stageInfo.intent,
       confidence: "medium",
       source: "fallback",
       error: error.message,
@@ -433,6 +495,87 @@ CRITICAL RULES:
     });
   }
 });
+
+// Helper to detect lead stage and customer intent from conversation & proposed reply
+function detectStageFromMessageAndReply(
+  message: string = "",
+  reply: string = "",
+  currentStage: string = "NEW_LEAD"
+): { suggestedStage: string; intent: string; reason: string } {
+  const combined = `${message} ${reply}`.toLowerCase();
+
+  // 1. Purchase signals (account details requested/sent, payment method, invoice, checkout, ready to pay)
+  if (
+    combined.includes("account detail") ||
+    combined.includes("account number") ||
+    combined.includes("bank detail") ||
+    combined.includes("send account") ||
+    combined.includes("make payment") ||
+    combined.includes("how to pay") ||
+    combined.includes("ready to pay") ||
+    combined.includes("ready to order") ||
+    combined.includes("transfer receipt") ||
+    combined.includes("payment methods") ||
+    combined.includes("send invoice") ||
+    combined.includes("checkout link") ||
+    combined.includes("payment link") ||
+    combined.includes("send your transfer") ||
+    combined.includes("i just paid") ||
+    combined.includes("sent the payment")
+  ) {
+    return {
+      suggestedStage: "AWAITING_PAYMENT",
+      intent: "purchase",
+      reason: "Payment details or purchase confirmation detected.",
+    };
+  }
+
+  // 2. Specific product/sizing selected
+  if (
+    combined.includes("size ") ||
+    combined.includes("size m") ||
+    combined.includes("size l") ||
+    combined.includes("size s") ||
+    combined.includes("size 16") ||
+    combined.includes("size 1") ||
+    combined.includes("reserve") ||
+    combined.includes("hold this") ||
+    combined.includes("order this") ||
+    combined.includes("wrap dress") ||
+    combined.includes("midi dress") ||
+    combined.includes("linen shirt")
+  ) {
+    return {
+      suggestedStage: "PRODUCT_SELECTED",
+      intent: "interest",
+      reason: "Specific product sizing, reservation, or item selected.",
+    };
+  }
+
+  // 3. Interest signals (price inquiries, stock/availability checks, delivery inquiries)
+  if (
+    combined.includes("available") ||
+    combined.includes("price") ||
+    combined.includes("how much") ||
+    combined.includes("cost") ||
+    combined.includes("in stock") ||
+    combined.includes("deliver") ||
+    combined.includes("shipping") ||
+    combined.includes("do you have")
+  ) {
+    return {
+      suggestedStage: "INTERESTED",
+      intent: "interest",
+      reason: "Customer inquired about catalog item availability or pricing.",
+    };
+  }
+
+  return {
+    suggestedStage: currentStage || "NEW_LEAD",
+    intent: "general_inquiry",
+    reason: "General customer inquiry.",
+  };
+}
 
 // Helper Fallback Reply Generator
 function getFallbackReply(

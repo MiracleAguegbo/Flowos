@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Search,
   Send,
@@ -40,6 +40,7 @@ import {
   WhatsAppIntegrationConfig,
   Business,
 } from '../../types';
+import { StorageService } from '../../services/storage';
 import { StageBadge } from '../common/Badge';
 
 interface InboxViewProps {
@@ -89,10 +90,15 @@ export const InboxView: React.FC<InboxViewProps> = ({
   useEffect(() => {
     if (activeConversationId) {
       setMobileView('chat');
+      setAiSuggestion(null);
+      setAiSuggestedStage(null);
+      setAiIntent(null);
     }
   }, [activeConversationId]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [aiSuggestedStage, setAiSuggestedStage] = useState<string | null>(null);
+  const [aiIntent, setAiIntent] = useState<string | null>(null);
   const [aiActionType, setAiActionType] = useState<string>('generate_reply');
   const [copiedText, setCopiedText] = useState(false);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
@@ -106,14 +112,33 @@ export const InboxView: React.FC<InboxViewProps> = ({
   }, [messages, activeConv]);
 
   // Filter conversations
-  const filteredConversations = conversations.filter((c) => {
-    const matchesSearch =
-      c.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.lastMessage.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.customerPhone.includes(searchTerm);
-    const matchesStage = filterStage === 'all' || c.leadStage === filterStage;
-    return matchesSearch && matchesStage;
-  });
+  const filteredConversations = useMemo(() => {
+    const seen = new Set<string>();
+    return conversations.filter((c) => {
+      if (!c?.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      const matchesSearch =
+        c.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.lastMessage.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.customerPhone.includes(searchTerm);
+      const matchesStage = filterStage === 'all' || c.leadStage === filterStage;
+      return matchesSearch && matchesStage;
+    });
+  }, [conversations, searchTerm, filterStage]);
+
+  // Guaranteed deduplication of messages by unique id
+  const dedupedMessages = useMemo(() => {
+    const seen = new Set<string>();
+    const result: Message[] = [];
+    for (const m of messages) {
+      const key = m.id || `${m.sender}-${m.timestamp}-${m.content}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(m);
+      }
+    }
+    return result;
+  }, [messages]);
 
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -144,6 +169,32 @@ export const InboxView: React.FC<InboxViewProps> = ({
       const data = await response.json();
       if (data.suggestion) {
         setAiSuggestion(data.suggestion);
+        if (data.suggestedStage && activeConv.customerId) {
+          setAiSuggestedStage(data.suggestedStage);
+          setAiIntent(data.intent || 'interest');
+
+          // Stage hierarchy order
+          const stageOrder: LeadStage[] = [
+            'NEW_LEAD',
+            'INTERESTED',
+            'PRODUCT_SELECTED',
+            'AWAITING_PAYMENT',
+            'PAID',
+            'COMPLETED',
+          ];
+          const currentStage = (activeConv.leadStage || customer?.leadStage || 'NEW_LEAD') as LeadStage;
+          const currentIdx = stageOrder.indexOf(currentStage);
+          const suggestedIdx = stageOrder.indexOf(data.suggestedStage as LeadStage);
+
+          // Advance lead if suggested stage is forward in the pipeline
+          if (
+            suggestedIdx > currentIdx &&
+            data.suggestedStage !== 'COMPLETED' &&
+            data.suggestedStage !== 'LOST'
+          ) {
+            onUpdateLeadStage(activeConv.customerId, data.suggestedStage as LeadStage);
+          }
+        }
       }
     } catch (err) {
       console.error('Error fetching AI reply:', err);
@@ -166,6 +217,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
 Please send your transfer receipt here once completed for instant dispatch confirmation! ✨`;
     setMessageInput(bankMsg);
+    if (activeConv?.customerId) {
+      onUpdateLeadStage(activeConv.customerId, 'AWAITING_PAYMENT');
+    }
   };
 
   const handleSendProductCard = (p: Product) => {
@@ -179,12 +233,20 @@ ${p.description}
 Would you like me to reserve this for you today?`;
     setMessageInput(productMsg);
     setShowCatalogModal(false);
+    if (activeConv?.customerId) {
+      onUpdateLeadStage(activeConv.customerId, 'PRODUCT_SELECTED');
+    }
   };
 
-  const isDemoMode = whatsAppConfig ? whatsAppConfig.isDemoMode || whatsAppConfig.status === 'demo_connected' : true;
-  const statusLabel = whatsAppConfig?.status === 'connected'
+  const isDemo = StorageService.isDemoStore();
+  const isConnected = whatsAppConfig?.status === 'connected';
+  const isDemoConnected = isDemo && whatsAppConfig?.status === 'demo_connected';
+
+  const statusLabel = isConnected
     ? 'WhatsApp Business • Connected'
-    : 'WhatsApp Business • Demo Connected';
+    : isDemoConnected
+    ? 'WhatsApp Business • Demo Connected'
+    : 'Awaiting WhatsApp Connection';
 
   return (
     <div className="h-full flex-1 flex flex-col overflow-hidden bg-white">
@@ -223,8 +285,24 @@ Would you like me to reserve this for you today?`;
           <div className="min-w-0 hidden sm:block">
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-slate-900 truncate">WhatsApp Inbox</h2>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-[#2563EB] border border-blue-200 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 bg-[#2563EB] rounded-full animate-pulse" />
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${
+                  isConnected
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : isDemoConnected
+                    ? 'bg-blue-50 text-[#2563EB] border border-blue-200'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isConnected
+                      ? 'bg-green-500'
+                      : isDemoConnected
+                      ? 'bg-[#2563EB] animate-pulse'
+                      : 'bg-amber-500 animate-pulse'
+                  }`}
+                />
                 {statusLabel}
               </span>
             </div>
@@ -260,8 +338,8 @@ Would you like me to reserve this for you today?`;
         </div>
       </div>
 
-      {/* 0.1 Demo Mode Banner */}
-      {isDemoMode && (
+      {/* 0.1 Demo Mode Banner - Demo Store Only */}
+      {isDemoConnected && (
         <div className="bg-blue-50 border-b border-blue-200 px-3 sm:px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 text-[#1E40AF]">
             <Info className="w-4 h-4 text-[#2563EB] shrink-0" />
@@ -273,6 +351,24 @@ Would you like me to reserve this for you today?`;
           <span className="text-[11px] font-mono text-blue-800 bg-blue-100 px-2 py-0.5 rounded font-medium">
             +234 814 555 0192 (Simulated)
           </span>
+        </div>
+      )}
+
+      {/* 0.2 Real Store Awaiting WhatsApp Connection Notice */}
+      {!isDemo && !isConnected && (
+        <div className="bg-amber-50/70 border-b border-amber-200/60 px-3 sm:px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 text-amber-900">
+            <Info className="w-4 h-4 text-amber-600 shrink-0" />
+            <span className="font-semibold">Awaiting WhatsApp Connection</span>
+            <span className="text-amber-800 hidden md:inline">
+              Live Meta WhatsApp Cloud API credentials will connect in Phase 3. Use 'Simulate Inbound Message' above to test customer chats & AI replies now.
+            </span>
+          </div>
+          {business?.phone && (
+            <span className="text-[11px] font-mono text-amber-900 bg-amber-100 px-2 py-0.5 rounded font-medium">
+              {business.phone}
+            </span>
+          )}
         </div>
       )}
 
@@ -505,11 +601,12 @@ Would you like me to reserve this for you today?`;
                 </span>
               </div>
 
-              {messages.map((msg) => {
+              {dedupedMessages.map((msg, idx) => {
                 const isBusiness = msg.sender === 'business';
+                const msgKey = msg.id || `msg-${idx}-${msg.timestamp}`;
                 return (
                   <div
-                    key={msg.id}
+                    key={msgKey}
                     className={`flex ${isBusiness ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
@@ -536,10 +633,15 @@ Would you like me to reserve this for you today?`;
             {/* AI Reply Suggestion Box (when available) */}
             {aiSuggestion && (
               <div className="mx-4 mb-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl shadow-xs">
-                <div className="flex items-center justify-between text-xs font-semibold text-emerald-900 mb-1.5">
-                  <div className="flex items-center space-x-1.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-emerald-900 mb-1.5 flex-wrap gap-1">
+                  <div className="flex items-center space-x-1.5 flex-wrap gap-1">
                     <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Gemini AI Suggestion ({aiActionType.replace('_', ' ')})</span>
+                    {aiSuggestedStage && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        Lead Stage: {aiSuggestedStage.replace('_', ' ')}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center space-x-1">
                     <button
@@ -549,7 +651,11 @@ Would you like me to reserve this for you today?`;
                       Insert into Input
                     </button>
                     <button
-                      onClick={() => setAiSuggestion(null)}
+                      onClick={() => {
+                        setAiSuggestion(null);
+                        setAiSuggestedStage(null);
+                        setAiIntent(null);
+                      }}
                       className="text-slate-400 hover:text-slate-600 p-0.5"
                     >
                       ✕
@@ -686,9 +792,9 @@ Would you like me to reserve this for you today?`;
 
             {/* Tags */}
             <div className="flex flex-wrap gap-1 mt-3">
-              {customer.tags.map((tag) => (
+              {customer.tags.map((tag, tIdx) => (
                 <span
-                  key={tag}
+                  key={`${tag}-${tIdx}`}
                   className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 border border-slate-200/60"
                 >
                   {tag}

@@ -16,6 +16,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { WhatsAppIntegrationSettings } from './WhatsAppIntegrationSettings';
+import { StorageService } from '../../services/storage';
 
 interface SettingsViewProps {
   business: Business;
@@ -192,17 +193,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <WhatsAppIntegrationSettings
           config={
             whatsAppConfig || {
-              status: 'demo_connected',
-              phoneNumber: '+2348145550192',
-              phoneNumberDisplay: '+234 814 555 0192',
-              businessAccountId: 'WABA_LUMA_902188',
-              businessAccountName: business.name || 'LUMA FASHION',
-              verifiedName: 'Luma Fashion Official',
-              isDemoMode: true,
+              status: StorageService.isDemoStore() ? 'demo_connected' : 'not_connected',
+              phoneNumber: StorageService.isDemoStore() ? '+2348145550192' : (business.phone || ''),
+              phoneNumberDisplay: StorageService.isDemoStore() ? '+234 814 555 0192' : (business.phone || ''),
+              businessAccountId: StorageService.isDemoStore() ? 'WABA_LUMA_902188' : `WABA_${business.id?.toUpperCase().slice(0, 10) || 'PENDING'}`,
+              businessAccountName: business.name || (StorageService.isDemoStore() ? 'LUMA FASHION' : 'Store Account'),
+              verifiedName: StorageService.isDemoStore() ? 'Luma Fashion Official' : (business.name || 'Store Account'),
+              isDemoMode: StorageService.isDemoStore(),
               qualityRating: 'GREEN',
               messagingTier: 'Tier 1 (1k/day)',
               webhookUrl: '/api/webhooks/whatsapp',
-              lastSyncTime: 'Just now',
+              lastSyncTime: StorageService.isDemoStore() ? 'Just now' : 'Awaiting connection',
             }
           }
           business={business}
