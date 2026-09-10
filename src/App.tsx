@@ -594,6 +594,8 @@ export default function App() {
           {activeView === 'followups' && (
             <FollowUpView
               followUps={data.followUps}
+              orders={data.orders}
+              leads={data.leads}
               onUpdateStatus={handleUpdateFollowUpStatus}
               onOpenChatWithDraft={handleOpenChat}
               onAddFollowUp={handleAddFollowUp}

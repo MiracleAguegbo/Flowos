@@ -553,7 +553,8 @@ class StorageService {
     const unsubFol = onSnapshot(
       collection(db, 'businesses', businessId, 'followUps'),
       (snap) => {
-        this.followUps = snap.docs.map((d) => d.data() as FollowUp);
+        const rawFollowUps = snap.docs.map((d) => d.data() as FollowUp);
+        this.followUps = rawFollowUps.map((fol) => this.enrichFollowUpValue(fol));
         this.notifyListeners();
       },
       (error) => {
@@ -1086,10 +1087,41 @@ class StorageService {
     if (isPaid) {
       // Mark any pending payment follow-ups for this customer as completed
       const pendingPaymentFol = this.followUps.find(
-        (f) => f.customerId === newOrder.customerId && f.category === 'payment' && f.status === 'pending'
+        (f) =>
+          (f.customerId === newOrder.customerId ||
+            (cust && f.customerName.toLowerCase() === cust.name.toLowerCase()) ||
+            (newOrder.customerName && f.customerName.toLowerCase() === newOrder.customerName.toLowerCase())) &&
+          f.category === 'payment' &&
+          f.status === 'pending'
       );
       if (pendingPaymentFol) {
         this.updateFollowUpStatus(pendingPaymentFol.id, 'completed');
+      } else {
+        // Direct paid order: ensure completed payment follow-up is logged for audit and completed history
+        const alreadyHasCompletedPayment = this.followUps.some(
+          (f) =>
+            (f.customerId === newOrder.customerId ||
+              (cust && f.customerName.toLowerCase() === cust.name.toLowerCase())) &&
+            f.category === 'payment' &&
+            f.status === 'completed' &&
+            (f.reason.includes(newOrder.orderNumber) || f.potentialValue === newOrder.total)
+        );
+        if (!alreadyHasCompletedPayment) {
+          this.addFollowUp({
+            customerId: newOrder.customerId,
+            customerName: cust ? cust.name : newOrder.customerName,
+            customerPhone: cust ? cust.phone : newOrder.customerPhone,
+            reason: `Payment confirmed for Order #${newOrder.orderNumber}`,
+            category: 'payment',
+            potentialValue: newOrder.total,
+            lastContact: 'Just now',
+            lastMessage: `Payment of ₦${newOrder.total.toLocaleString()} confirmed via WhatsApp transfer.`,
+            recommendedAction: 'Payment verified and credited to Zenith Bank account. Order ready for fulfillment.',
+            dueDate: 'Today',
+            priority: 'medium',
+            status: 'completed',
+          });
+        }
       }
 
       this.addFollowUp({
@@ -1176,10 +1208,43 @@ class StorageService {
 
             // Mark any pending payment follow-ups for this customer as completed
             const pendingPaymentFol = this.followUps.find(
-              (f) => f.customerId === order.customerId && f.category === 'payment' && f.status === 'pending'
+              (f) =>
+                (f.customerId === order.customerId ||
+                  (cust && f.customerName.toLowerCase() === cust.name.toLowerCase()) ||
+                  (order.customerName && f.customerName.toLowerCase() === order.customerName.toLowerCase())) &&
+                f.category === 'payment' &&
+                f.status === 'pending'
             );
             if (pendingPaymentFol) {
               this.updateFollowUpStatus(pendingPaymentFol.id, 'completed');
+            } else {
+              // Customer paid directly or skipped the awaiting-payment follow-up stage.
+              // Ensure a completed payment record exists so 'Completed' tab history is complete.
+              const alreadyHasCompletedPayment = this.followUps.some(
+                (f) =>
+                  (f.customerId === order.customerId ||
+                    (cust && f.customerName.toLowerCase() === cust.name.toLowerCase()) ||
+                    (order.customerName && f.customerName.toLowerCase() === order.customerName.toLowerCase())) &&
+                  f.category === 'payment' &&
+                  f.status === 'completed' &&
+                  (f.reason.includes(order.orderNumber) || f.potentialValue === order.total)
+              );
+              if (!alreadyHasCompletedPayment) {
+                this.addFollowUp({
+                  customerId: order.customerId,
+                  customerName: cust ? cust.name : order.customerName,
+                  customerPhone: cust ? cust.phone : order.customerPhone,
+                  reason: `Payment confirmed for Order #${order.orderNumber}`,
+                  category: 'payment',
+                  potentialValue: order.total,
+                  lastContact: 'Just now',
+                  lastMessage: `Payment of ₦${order.total.toLocaleString()} confirmed via WhatsApp transfer.`,
+                  recommendedAction: 'Payment verified and credited to Zenith Bank account. Order ready for fulfillment.',
+                  dueDate: 'Today',
+                  priority: 'medium',
+                  status: 'completed',
+                });
+              }
             }
 
             // Schedule post-purchase fulfillment follow-up
@@ -1270,9 +1335,142 @@ class StorageService {
     this.notify();
   }
 
+  public enrichFollowUpValue(fol: FollowUp): FollowUp {
+    if (fol.potentialValue && fol.potentialValue > 0) {
+      return fol;
+    }
+
+    // Match order by order number in reason/lastMessage or by customerId
+    const matchedOrder =
+      this.orders.find(
+        (o) =>
+          (o.orderNumber && fol.reason.includes(o.orderNumber)) ||
+          (o.orderNumber && fol.lastMessage?.includes(o.orderNumber))
+      ) ||
+      (fol.customerId ? this.orders.filter((o) => o.customerId === fol.customerId).slice(-1)[0] : undefined);
+
+    if (matchedOrder && matchedOrder.total > 0) {
+      const isFulfillment =
+        fol.category === 'fulfillment' ||
+        fol.category === 'dispatch' ||
+        fol.reason.toLowerCase().includes('fulfillment') ||
+        fol.reason.toLowerCase().includes('dispatch') ||
+        fol.reason.toLowerCase().includes('delivery');
+      const updated: FollowUp = {
+        ...fol,
+        potentialValue: matchedOrder.total,
+        category: isFulfillment ? 'fulfillment' : fol.category,
+      };
+
+      if (auth.currentUser) {
+        const folRef = doc(db, 'businesses', this.currentBusinessId, 'followUps', fol.id);
+        updateDoc(folRef, {
+          potentialValue: matchedOrder.total,
+          category: updated.category,
+        }).catch(() => {});
+      }
+      return updated;
+    }
+
+    const matchedLead = this.leads.find(
+      (l) =>
+        l.customerId === fol.customerId ||
+        (fol.customerName && l.customerName.toLowerCase() === fol.customerName.toLowerCase())
+    );
+    if (matchedLead && matchedLead.potentialValue > 0) {
+      const updated: FollowUp = {
+        ...fol,
+        potentialValue: matchedLead.potentialValue,
+      };
+      if (auth.currentUser) {
+        const folRef = doc(db, 'businesses', this.currentBusinessId, 'followUps', fol.id);
+        updateDoc(folRef, {
+          potentialValue: matchedLead.potentialValue,
+        }).catch(() => {});
+      }
+      return updated;
+    }
+
+    return fol;
+  }
+
+  private ensureCompletedPaymentFollowUps() {
+    // For any fulfillment follow-up or paid order, ensure there is a corresponding completed payment follow-up
+    const fulfillmentItems = this.followUps.filter(
+      (f) =>
+        f.category === 'fulfillment' ||
+        f.category === 'dispatch' ||
+        f.reason.toLowerCase().includes('fulfillment') ||
+        f.reason.toLowerCase().includes('dispatch')
+    );
+
+    fulfillmentItems.forEach((fol) => {
+      const hasCompletedPayment = this.followUps.some(
+        (f) =>
+          f.status === 'completed' &&
+          f.category === 'payment' &&
+          (f.customerId === fol.customerId ||
+            (fol.customerName && f.customerName.toLowerCase() === fol.customerName.toLowerCase()))
+      );
+
+      if (!hasCompletedPayment) {
+        const cust = this.customers.find(
+          (c) =>
+            c.id === fol.customerId ||
+            (fol.customerName && c.name.toLowerCase() === fol.customerName.toLowerCase())
+        );
+        const matchedOrder = this.orders.find(
+          (o) =>
+            (o.orderNumber && fol.reason.includes(o.orderNumber)) ||
+            (o.customerId && fol.customerId && o.customerId === fol.customerId) ||
+            (fol.customerName && o.customerName.toLowerCase() === fol.customerName.toLowerCase())
+        );
+        const matchedLead = this.leads.find(
+          (l) =>
+            l.customerId === fol.customerId ||
+            (fol.customerName && l.customerName.toLowerCase() === fol.customerName.toLowerCase())
+        );
+
+        const amount =
+          fol.potentialValue > 0
+            ? fol.potentialValue
+            : matchedOrder
+            ? matchedOrder.total
+            : matchedLead
+            ? matchedLead.potentialValue
+            : 38000;
+        const orderNum = matchedOrder ? `#${matchedOrder.orderNumber}` : '';
+
+        const completedFol: FollowUp = {
+          id: `fol_completed_pay_${fol.customerId || Date.now()}`,
+          businessId: this.currentBusinessId,
+          customerId: fol.customerId || (cust ? cust.id : ''),
+          customerName: fol.customerName,
+          customerPhone: fol.customerPhone,
+          reason: `Payment confirmed${orderNum ? ` for Order ${orderNum}` : ''}`,
+          category: 'payment',
+          potentialValue: amount,
+          lastContact: 'Earlier today',
+          lastMessage: `Payment of ₦${amount.toLocaleString()} confirmed via WhatsApp transfer.`,
+          recommendedAction: 'Payment verified and credited to Zenith Bank account. Order ready for fulfillment.',
+          dueDate: 'Today',
+          priority: 'medium',
+          status: 'completed',
+        };
+
+        this.followUps.push(completedFol);
+        if (auth.currentUser) {
+          const folRef = doc(db, 'businesses', this.currentBusinessId, 'followUps', completedFol.id);
+          setDoc(folRef, completedFol).catch(() => {});
+        }
+      }
+    });
+  }
+
   // Follow-ups
   public getFollowUps(): FollowUp[] {
-    return [...this.followUps];
+    this.ensureCompletedPaymentFollowUps();
+    return this.followUps.map((f) => this.enrichFollowUpValue(f));
   }
 
   public updateFollowUpStatus(id: string, status: FollowUp['status']) {

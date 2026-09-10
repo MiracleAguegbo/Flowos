@@ -3,6 +3,8 @@ import {
   FollowUp,
   FollowUpCategory,
   FollowUpPriority,
+  Order,
+  Lead,
 } from '../../types';
 import {
   Clock,
@@ -21,6 +23,8 @@ import { Modal } from '../common/Modal';
 
 interface FollowUpViewProps {
   followUps: FollowUp[];
+  orders?: Order[];
+  leads?: Lead[];
   onUpdateStatus: (id: string, status: FollowUp['status']) => void;
   onOpenChatWithDraft: (customerId: string, draftMessage?: string) => void;
   onAddFollowUp: (data: Omit<FollowUp, 'id' | 'businessId'>) => void;
@@ -28,6 +32,8 @@ interface FollowUpViewProps {
 
 export const FollowUpView: React.FC<FollowUpViewProps> = ({
   followUps,
+  orders = [],
+  leads = [],
   onUpdateStatus,
   onOpenChatWithDraft,
   onAddFollowUp,
@@ -49,12 +55,81 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
     status: 'pending' as FollowUp['status'],
   });
 
+  const getFollowUpDetails = (item: FollowUp) => {
+    const isFulfillment =
+      item.category === 'fulfillment' ||
+      item.category === 'dispatch' ||
+      item.reason.toLowerCase().includes('fulfillment') ||
+      item.reason.toLowerCase().includes('dispatch') ||
+      item.reason.toLowerCase().includes('delivery') ||
+      item.reason.toLowerCase().includes('courier');
+
+    // Match order first if there's an order number in reason or lastMessage or by customer
+    let matchedOrder = orders.find(
+      (o) =>
+        (o.orderNumber && item.reason.includes(o.orderNumber)) ||
+        (o.orderNumber && item.lastMessage?.includes(o.orderNumber))
+    );
+    if (!matchedOrder && item.customerId && orders.length > 0) {
+      const custOrders = orders.filter((o) => o.customerId === item.customerId);
+      if (custOrders.length > 0) {
+        matchedOrder = custOrders[custOrders.length - 1];
+      }
+    }
+
+    // Match lead if any
+    const matchedLead = leads.find(
+      (l) =>
+        l.customerId === item.customerId ||
+        (item.customerName && l.customerName.toLowerCase() === item.customerName.toLowerCase())
+    );
+
+    let displayValue = item.potentialValue || 0;
+    if (displayValue === 0) {
+      if (matchedOrder && matchedOrder.total > 0) {
+        displayValue = matchedOrder.total;
+      } else if (matchedLead && matchedLead.potentialValue > 0) {
+        displayValue = matchedLead.potentialValue;
+      }
+    }
+
+    return {
+      isFulfillment,
+      displayValue,
+      matchedOrder,
+      matchedLead,
+    };
+  };
+
+  const isRecoverableFollowUp = (item: FollowUp) => {
+    if (item.status !== 'pending') return false;
+    const { isFulfillment, matchedOrder } = getFollowUpDetails(item);
+    if (isFulfillment) return false;
+    if (matchedOrder && matchedOrder.paymentStatus === 'paid') return false;
+    return true;
+  };
+
   const pendingFollowUps = followUps.filter((f) => f.status === 'pending');
-  const totalRecoverable = pendingFollowUps.reduce((sum, f) => sum + f.potentialValue, 0);
+  const recoverableFollowUps = pendingFollowUps.filter(isRecoverableFollowUp);
+  const totalRecoverable = recoverableFollowUps.reduce((sum, f) => {
+    const { displayValue } = getFollowUpDetails(f);
+    return sum + displayValue;
+  }, 0);
+
+  const fulfillmentFollowUps = pendingFollowUps.filter((f) => {
+    const { isFulfillment, matchedOrder } = getFollowUpDetails(f);
+    return isFulfillment || (matchedOrder && matchedOrder.paymentStatus === 'paid');
+  });
+  const fulfillmentTotalValue = fulfillmentFollowUps.reduce((sum, f) => {
+    const { displayValue } = getFollowUpDetails(f);
+    return sum + displayValue;
+  }, 0);
 
   const filteredFollowUps = followUps.filter((f) => {
     if (activeCategory === 'all') return f.status === 'pending';
     if (activeCategory === 'completed') return f.status === 'completed';
+    const { isFulfillment } = getFollowUpDetails(f);
+    if (activeCategory === 'fulfillment') return isFulfillment && f.status === 'pending';
     return f.category === activeCategory && f.status === 'pending';
   });
 
@@ -123,6 +198,14 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
           <p className="text-slate-300 text-xs sm:text-sm mt-1 max-w-xl">
             Recoverable revenue locked in stalled WhatsApp chats, unpaid reservations, and awaiting transfers.
           </p>
+          {fulfillmentFollowUps.length > 0 && (
+            <p className="text-emerald-300 text-xs mt-1.5 flex items-center gap-1.5 font-medium">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span>
+                ₦{fulfillmentTotalValue.toLocaleString()} across {fulfillmentFollowUps.length} order{fulfillmentFollowUps.length === 1 ? '' : 's'} is already paid and in active fulfillment/dispatch.
+              </span>
+            </p>
+          )}
         </div>
 
         <div className="flex items-center space-x-3 shrink-0">
@@ -217,94 +300,104 @@ export const FollowUpView: React.FC<FollowUpViewProps> = ({
             No follow-ups in this category. All clear!
           </div>
         ) : (
-          filteredFollowUps.map((item) => (
-            <div
-              key={item.id}
-              className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between space-y-4"
-            >
-              <div>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">
-                      {item.customerName}
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-0.5">{item.customerPhone}</p>
+          filteredFollowUps.map((item) => {
+            const { isFulfillment, displayValue } = getFollowUpDetails(item);
+
+            return (
+              <div
+                key={item.id}
+                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between space-y-4"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        {item.customerName}
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-0.5">{item.customerPhone}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      {isFulfillment ? getCategoryBadge('fulfillment') : getCategoryBadge(item.category)}
+                      {getPriorityBadge(item.priority)}
+                    </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
-                    {getCategoryBadge(item.category)}
-                    {getPriorityBadge(item.priority)}
+
+                  <div className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span className="font-medium">
+                        {item.status === 'completed'
+                          ? 'Recovered / Paid:'
+                          : isFulfillment
+                          ? 'Order Value (Paid):'
+                          : 'Potential Sale (Unpaid):'}
+                      </span>
+                      <strong className={isFulfillment ? "text-slate-800 font-bold" : "text-emerald-700 font-bold"}>
+                        ₦{displayValue.toLocaleString()}
+                      </strong>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                      <span>Reason:</span>
+                      <span className="text-slate-700 font-medium text-right truncate max-w-[170px]" title={item.reason}>
+                        {item.reason}
+                      </span>
+                    </div>
                   </div>
+
+                  {item.lastMessage && (
+                    <div className="mt-3 text-xs text-slate-600 bg-emerald-50/40 p-2.5 rounded-lg border border-emerald-100/60">
+                      <span className="text-[10px] uppercase font-bold text-emerald-800 block">
+                        Last WhatsApp Message:
+                      </span>
+                      <p className="italic mt-0.5">"{item.lastMessage}"</p>
+                    </div>
+                  )}
+
+                  {item.recommendedAction && (
+                    <div className="mt-2.5 text-xs text-slate-700">
+                      <strong className="text-slate-900">Recommended Action:</strong>{' '}
+                      {item.recommendedAction}
+                    </div>
+                  )}
                 </div>
 
-                <div className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs">
-                  <div className="flex items-center justify-between text-slate-600">
-                    <span className="font-medium">
-                      {item.category === 'fulfillment' || item.category === 'dispatch' ? 'Order Value:' : 'Potential Sale:'}
-                    </span>
-                    <strong className="text-emerald-700 font-bold">
-                      ₦{item.potentialValue.toLocaleString()}
-                    </strong>
-                  </div>
-                  <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                    <span>Reason:</span>
-                    <span className="text-slate-700 font-medium text-right truncate max-w-[170px]">
-                      {item.reason}
-                    </span>
-                  </div>
+                {/* Bottom Actions */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <button
+                    onClick={() =>
+                      onOpenChatWithDraft(
+                        item.customerId,
+                        isFulfillment
+                          ? `Hello ${item.customerName.split(' ')[0]}! We're coordinating delivery of your order right now. Could you please confirm your delivery address and contact number?`
+                          : `Hello Queen ${item.customerName.split(' ')[0]}! Just checking in regarding your reservation for LUMA Fashion. Would you like us to hold this piece for you today?`
+                      )
+                    }
+                    className="flex-1 inline-flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition-colors shadow-2xs"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Nudge on WhatsApp</span>
+                  </button>
+
+                  {item.status === 'pending' ? (
+                    <button
+                      onClick={() => onUpdateStatus(item.id, 'completed')}
+                      title="Mark Won / Completed"
+                      className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-800 transition-colors"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onUpdateStatus(item.id, 'pending')}
+                      title="Re-open"
+                      className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                    >
+                      Re-open
+                    </button>
+                  )}
                 </div>
-
-                {item.lastMessage && (
-                  <div className="mt-3 text-xs text-slate-600 bg-emerald-50/40 p-2.5 rounded-lg border border-emerald-100/60">
-                    <span className="text-[10px] uppercase font-bold text-emerald-800 block">
-                      Last WhatsApp Message:
-                    </span>
-                    <p className="italic mt-0.5">"{item.lastMessage}"</p>
-                  </div>
-                )}
-
-                {item.recommendedAction && (
-                  <div className="mt-2.5 text-xs text-slate-700">
-                    <strong className="text-slate-900">Recommended Action:</strong>{' '}
-                    {item.recommendedAction}
-                  </div>
-                )}
               </div>
-
-              {/* Bottom Actions */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                <button
-                  onClick={() =>
-                    onOpenChatWithDraft(
-                      item.customerId,
-                      `Hello Queen ${item.customerName.split(' ')[0]}! Just checking in regarding your reservation for LUMA Fashion. Would you like us to hold this piece for you today?`
-                    )
-                  }
-                  className="flex-1 inline-flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition-colors shadow-2xs"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Nudge on WhatsApp</span>
-                </button>
-
-                {item.status === 'pending' ? (
-                  <button
-                    onClick={() => onUpdateStatus(item.id, 'completed')}
-                    title="Mark Won / Completed"
-                    className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-800 transition-colors"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => onUpdateStatus(item.id, 'pending')}
-                    title="Re-open"
-                    className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                  >
-                    Re-open
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
